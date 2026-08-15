@@ -1,40 +1,48 @@
 # PROJECT STATUS — soundscape-v1-temp
 
 ## Product objective
-Personal Endel-inspired generative soundscape app with four modes: Focus, Sleep, Pump, Relax.
+Personal Endel-inspired generative soundscape app. Four modes: Focus, Sleep, Relax, Pump. Finite loop-safe generative files (pentatonic layered synthesis) instead of a real-time adaptive stream. No subscription, no time limit.
 
 ## Current architecture
-None yet — project is in the audio-prototyping (v1 listening) phase. This repo is a temporary file-sharing/documentation repo. No application code exists.
+None yet — audio-prototyping phase. This repo is temporary docs/file-sharing. No application code exists. Planned app: TypeScript + Three.js (React/Vite), deployed on Vercel.
 
 ## Technology stack
-- Audio: 5-minute FLAC prototypes per mode (lossless; large files split into standalone valid FLAC parts of ~100 s).
-- Planned UI: **Three.js**, black background with red accent, no square/boxy shapes.
+- Audio generation: Python (numpy/scipy) synthesis → WAV → ffmpeg → FLAC. Lossless FLAC master; ~100 s standalone lossless splits for chat delivery (<~10 MB each).
+- Planned UI: Three.js + TypeScript, black background with deep-red glow, **no squares/squircles**, reduced-motion support, non-WebGL fallback.
 
 ## Working features
-- v1 audio delivered via chat attachments: Focus (full), Sleep (full), Pump (part 1), Relax (part 1: `relax_5min_v1_part1.flac`, 10.1 MB, first 100 s — long pad swells, no beat, pink-noise bed).
-- Pump/Relax parts 2–3 staged, deliverable on request.
+- v1 audio (5-min per mode) was generated and delivered via chat attachments in the previous session: Focus (full), Sleep (full, 9.1 MB), Pump (part 1, 10.9 MB), Relax (part 1, 10.1 MB). **Files did not survive the session change — regenerate when needed.**
 
 ## Current task
-User is listening to v1 tracks and will return with notes per mode.
+Collect the user's per-mode listening notes, then lock the v2 sound plan and finish planning (no coding until planning is locked).
+
+## Feedback captured so far
+- Focus v1: more ethereal/relaxing than focus; string plucks distracting; loop nice; wants directional bass/spatial movement like Endel. Sleep/Pump/Relax notes pending.
 
 ## Pending tasks
-1. Collect per-mode listening notes.
-2. Lock the **v2 sound plan**.
-3. Lock the **3 → 12 → 75 focus-session structure**.
-4. Lock the **black/red no-squares Three.js interface** concept, then begin app implementation (likely a new app repo).
+1. Remaining listening notes (Sleep, Pump, Relax).
+2. Lock v2 sound plan (draft per-mode direction already agreed — see README §2).
+3. Lock 3 → 12 → 75 → 12 → 75 focus-session structure implementation details (8–15 s crossfades, dual overlapped players; 3-min Initiation plays once only).
+4. Obtain Teja TEDx GitHub repo URL (visual ref: https://teja-for-ted-x-ecru.vercel.app/).
+5. Decide large-audio hosting: GitHub Releases (user-uploaded) vs Vercel Blob vs Dropbox public links vs deterministic on-demand generation.
+6. Build the app repo; deploy to Vercel.
+7. Eventually: 90-minute Deep Focus files (chunked synthesis).
 
 ## Known issues
-- Audio files are not stored in this repo (chat-attachment delivery only); repo is docs-only.
+- Sandbox has no network egress; GitHub MCP tools are text-only → large binaries cannot be pushed from the agent environment. Chat attachments limited to ~10 MB reliably.
+- Audio files are not stored anywhere durable yet.
 
 ## Required environment variables
 None.
 
 ## Deployment information
-None — no deployable app yet. Future app should target Vercel.
+None yet — future app targets Vercel.
 
 ## Important architectural decisions
-- Large FLACs are split losslessly into standalone-playable parts (~100 s each).
-- UI direction fixed early: Three.js, black/red, no squares.
+- FLAC lossless master; MP3 rejected for looping (gap/click from encoder padding).
+- Loop-safe design: file endings crossfade into their own openings; session player overlaps two audio elements with 8–15 s crossfades.
+- 3-min Initiation file is a fixed conditioning cue (identical every session, plays once).
+- UI: Three.js, black/red, no squares/squircles, restrained continuous animation.
 
 ## Last completed change
-Added handoff README.md and this PROJECT_STATUS.md so a new chat session can resume seamlessly.
+Enriched handoff docs with full context recovered from the previous-chat PDF transcript (v2 sound direction, session structure, interface plan, hosting constraints, Focus feedback).
