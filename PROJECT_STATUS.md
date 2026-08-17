@@ -1,48 +1,55 @@
-# PROJECT STATUS — soundscape-v1-temp
+# PROJECT STATUS — soundscape
 
 ## Product objective
-Personal Endel-inspired generative soundscape app. Four modes: Focus, Sleep, Relax, Pump. Finite loop-safe generative files (pentatonic layered synthesis) instead of a real-time adaptive stream. No subscription, no time limit.
+Personal Endel-inspired generative soundscape app. Four modes: Focus, Relax, Sleep, Pump. Finite loop-safe generative files instead of a real-time adaptive stream. Lifelong, platform-independent: PWA + offline-cached audio + regenerable-from-code masters. No subscription, no time limit.
 
 ## Current architecture
-None yet — audio-prototyping phase. This repo is temporary docs/file-sharing. No application code exists. Planned app: TypeScript + Three.js (React/Vite), deployed on Vercel.
+- **Next.js 16.3.0 (App Router) + TypeScript** app at repo root, deployable on Vercel (framework preset: Next.js, defaults).
+- Audio generator: `generator/gen_soundscapes.py` (pure numpy + stdlib wave, deterministic seeds, loop-safe crossfaded tails).
+- CI: `.github/workflows/validate.yml` (lint/typecheck/test skip-if-absent, mandatory build) + `ci-report.yml` (runs scripts listed in `ci-request.txt`, publishes `ci-reports/latest.md`, commits lockfile back).
+- Planned: Three.js/R3F visuals (black/red, no squares/squircles), Vercel Blob audio hosting, PWA + Cache Storage for offline.
 
 ## Technology stack
-- Audio generation: Python (numpy/scipy) synthesis → WAV → ffmpeg → FLAC. Lossless FLAC master; ~100 s standalone lossless splits for chat delivery (<~10 MB each).
-- Planned UI: Three.js + TypeScript, black background with deep-red glow, **no squares/squircles**, reduced-motion support, non-WebGL fallback.
+Next.js 16.3.0, React 19, TypeScript 5.6, plain CSS (no Tailwind yet). Python/numpy for audio synthesis. Node 22 in CI.
 
 ## Working features
-- v1 audio (5-min per mode) was generated and delivered via chat attachments in the previous session: Focus (full), Sleep (full, 9.1 MB), Pump (part 1, 10.9 MB), Relax (part 1, 10.1 MB). **Files did not survive the session change — regenerate when needed.**
+- App shell: breathing red orb, 4 circular mode buttons, focus-session structure readout. Static build passes (CI: typecheck PASS, build PASS — ci-reports/latest.md @ 7e740d2).
+- v1.1 audio samples delivered via chat (WAV <10 MB each): sleep 109s, relax 109s, pump 74s. **Sleep is LOCKED (seed 41) — user: "OUTSTANDING".**
+
+## Feedback captured
+- Sleep v1.1: outstanding — do not change.
+- Relax v1.1: failed — user couldn't relax. Await reference tracks.
+- Pump v1.1: nice but mediocre — likely flat energy curve. Await reference tracks.
+- Focus v1: too ethereal, plucks distracting; wants directional/spatial bass. v2 pending.
 
 ## Current task
-Collect the user's per-mode listening notes, then lock the v2 sound plan and finish planning (no coding until planning is locked).
-
-## Feedback captured so far
-- Focus v1: more ethereal/relaxing than focus; string plucks distracting; loop nice; wants directional bass/spatial movement like Endel. Sleep/Pump/Relax notes pending.
+User deploying repo to Vercel (preset: Next.js). User will supply reference audio samples per mode; agent will profile them programmatically (tempo, spectral balance, dynamics, stereo width) and regenerate Relax + Pump + Focus v2.
 
 ## Pending tasks
-1. Remaining listening notes (Sleep, Pump, Relax).
-2. Lock v2 sound plan (draft per-mode direction already agreed — see README §2).
-3. Lock 3 → 12 → 75 → 12 → 75 focus-session structure implementation details (8–15 s crossfades, dual overlapped players; 3-min Initiation plays once only).
-4. Obtain Teja TEDx GitHub repo URL (visual ref: https://teja-for-ted-x-ecru.vercel.app/).
-5. Decide large-audio hosting: GitHub Releases (user-uploaded) vs Vercel Blob vs Dropbox public links vs deterministic on-demand generation.
-6. Build the app repo; deploy to Vercel.
-7. Eventually: 90-minute Deep Focus files (chunked synthesis).
+1. Verify user's Vercel deployment succeeds.
+2. Receive + profile reference tracks; regenerate Relax/Pump/Focus v2.
+3. Audio engine in app: dual-<audio> crossfade player, 3→12→75→12→75 focus session.
+4. Vercel Blob store setup (guide: docs/VERCEL_BLOB_GUIDE.md) + audio-manifest.json.
+5. Three.js/R3F visuals (ref: https://teja-for-ted-x-ecru.vercel.app/ — repo: TJ-zip/Teja-For-TedX — Next 16 + R3F + three 0.169 + Tailwind).
+6. PWA: manifest, service worker, Cache Storage offline audio.
+7. Long-form renders (12/75/90-min) via chunked synthesis.
 
 ## Known issues
-- Sandbox has no network egress; GitHub MCP tools are text-only → large binaries cannot be pushed from the agent environment. Chat attachments limited to ~10 MB reliably.
-- Audio files are not stored anywhere durable yet.
+- Sandbox: no ffmpeg/FLAC encoder, no pip installs, no network egress; binaries can't be pushed to GitHub. WAV used for delivery; FLAC mastering deferred.
+- GitHub UI "unicorn" error seen by user on PR views (transient GitHub-side).
 
 ## Required environment variables
-None.
+- BLOB_READ_WRITE_TOKEN (future; auto-injected by Vercel when Blob store connected; never committed).
 
 ## Deployment information
-None yet — future app targets Vercel.
+Vercel: import repo, framework preset **Next.js**, default build (`next build`). No env vars needed yet.
 
 ## Important architectural decisions
-- FLAC lossless master; MP3 rejected for looping (gap/click from encoder padding).
-- Loop-safe design: file endings crossfade into their own openings; session player overlaps two audio elements with 8–15 s crossfades.
-- 3-min Initiation file is a fixed conditioning cue (identical every session, plays once).
-- UI: Three.js, black/red, no squares/squircles, restrained continuous animation.
+- Sleep generator seed 41 locked.
+- Loop-safe tails; dual-player 8–15 s crossfades; 3-min Initiation plays once per session.
+- FLAC master / WAV fallback; MP3 rejected (loop gap).
+- Vercel-independent: PWA, offline cache, no Vercel-only APIs in app code; Blob is distribution only.
+- UI: black/red, circles/organic shapes only — squares and squircles banned project-wide.
 
 ## Last completed change
-Enriched handoff docs with full context recovered from the previous-chat PDF transcript (v2 sound direction, session structure, interface plan, hosting constraints, Focus feedback).
+PR #3 merged (681ec2f): Next.js app shell + validate/ci-report workflows; CI green (typecheck+build); lockfile generated and committed by CI.
