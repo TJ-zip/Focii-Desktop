@@ -1,0 +1,3 @@
+# One npm script name per line. Only names declared in package.json run.
+typecheck
+build

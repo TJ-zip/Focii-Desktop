@@ -1,0 +1,105 @@
+name: CI Report
+
+on:
+  push:
+    paths:
+      - ci-request.txt
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ci-report-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/logs
+          if [ -f package-lock.json ]; then
+            npm ci 2>&1 | tee /tmp/install.log
+          else
+            npm install --no-audit --no-fund 2>&1 | tee /tmp/install.log
+          fi
+
+      - name: Run requested scripts
+        run: |
+          STATUS=0
+          : > /tmp/summary.txt
+          while IFS= read -r raw || [ -n "$raw" ]; do
+            line="$(echo "$raw" | tr -d '[:space:]')"
+            [ -z "$line" ] && continue
+            case "$line" in \#*) continue ;; esac
+            if ! echo "$line" | grep -Eq '^[A-Za-z0-9:_-]+$'; then
+              echo "REJECTED (invalid name): $line" >> /tmp/summary.txt
+              continue
+            fi
+            if ! node -e "const s=require('./package.json').scripts||{};process.exit(Object.prototype.hasOwnProperty.call(s,'$line')?0:1)"; then
+              echo "SKIPPED (not a declared script): $line" >> /tmp/summary.txt
+              continue
+            fi
+            echo "== npm run $line =="
+            if npm run "$line" > "/tmp/logs/$line.log" 2>&1; then
+              echo "PASS: $line" >> /tmp/summary.txt
+            else
+              echo "FAIL: $line" >> /tmp/summary.txt
+              STATUS=1
+            fi
+          done < ci-request.txt
+          echo "STATUS=$STATUS" >> "$GITHUB_ENV"
+
+      - name: Write report
+        if: always()
+        run: |
+          mkdir -p ci-reports
+          {
+            echo "# CI Report — $(date -u +%FT%TZ)"
+            echo
+            echo "Commit: ${GITHUB_SHA} | Branch: ${GITHUB_REF_NAME}"
+            echo
+            echo "## Summary"
+            echo
+            cat /tmp/summary.txt 2>/dev/null || echo "(no scripts requested)"
+            echo
+            echo "## Install log (excerpt)"
+            echo '```'
+            head -60 /tmp/install.log 2>/dev/null
+            echo '  ...'
+            tail -160 /tmp/install.log 2>/dev/null
+            echo '```'
+            for f in /tmp/logs/*.log; do
+              [ -e "$f" ] || continue
+              echo
+              echo "## script: $(basename "$f" .log)"
+              echo '```'
+              head -60 "$f"
+              echo '  ...'
+              tail -160 "$f"
+              echo '```'
+            done
+          } > ci-reports/latest.md
+
+      - name: Commit report and lockfile back
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ci-reports/latest.md
+          [ -f package-lock.json ] && git add package-lock.json
+          git commit -m "ci: publish report and lockfile [skip ci]" || echo "nothing to commit"
+          git push
+
+      - name: Fail job if any script failed
+        if: always()
+        run: exit "${STATUS:-0}"
