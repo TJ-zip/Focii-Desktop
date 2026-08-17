@@ -57,7 +57,7 @@ Sequence: **3 → 12 → 75 → 12 → 75 → …** Use ~8–15-second overlappi
 1. Read this README and `PROJECT_STATUS.md`.
 2. Get the user's per-mode listening notes (Focus feedback already captured above).
 3. Lock the v2 sound plan; regenerate v2 audio (the v1 files were lost with the old session — regenerate if reference is needed).
-4. Get the Teja TEDx GitHub repo URL from the user; then design the Three.js interface.
+4. Get the Teja TEDx GitHub repo URL - "https://github.com/TJ-zip/Teja-For-TedX" then design the Three.js interface.
 5. Build the app in a proper (new) repo, targeting Vercel; decide audio hosting.
 
 ## 7. Repo contents
