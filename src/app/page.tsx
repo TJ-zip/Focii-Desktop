@@ -1,15 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import Visualizer, { type VisualMode } from "../components/Visualizer";
 
-type Mode = "focus" | "relax" | "sleep" | "pump";
+type Mode = VisualMode;
 
 const MODES: { id: Mode; label: string; blurb: string }[] = [
   {
     id: "focus",
     label: "Focus",
     blurb:
-      "Session structure: 3-min Initiation (plays once) \u2192 12-min Transition \u2192 75-min Deep Focus \u2192 loops 12 \u2192 75 \u2026 with 8\u201315 s crossfades.",
+      "3-min Initiation \u2192 12-min Transition \u2192 75-min Deep Focus \u2192 loops 12 \u2192 75 \u2026",
   },
   {
     id: "relax",
@@ -24,7 +25,7 @@ const MODES: { id: Mode; label: string; blurb: string }[] = [
   {
     id: "pump",
     label: "Pump",
-    blurb: "Driving percussion and bass momentum. Energetic, not aggressive.",
+    blurb: "Driving percussion and bass momentum.",
   },
 ];
 
@@ -34,29 +35,27 @@ export default function Home() {
 
   return (
     <main>
+      <Visualizer mode={mode} />
       <span className="wordmark">Soundscape</span>
-      <div className="orb" aria-hidden="true" />
-      <div className="modes" role="group" aria-label="Soundscape mode">
-        {MODES.map((m) => (
-          <button
-            key={m.id}
-            type="button"
-            className="mode"
-            aria-pressed={m.id === mode}
-            onClick={() => setMode(m.id)}
-          >
-            {m.label}
-          </button>
-        ))}
+      <div className="hud">
+        <p className="session">
+          <strong>{active.label}</strong>
+          <span className="blurb">{active.blurb}</span>
+        </p>
+        <div className="modes" role="group" aria-label="Soundscape mode">
+          {MODES.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              className="mode"
+              aria-pressed={m.id === mode}
+              onClick={() => setMode(m.id)}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
       </div>
-      <p className="session">
-        <strong>{active.label}</strong>
-        <br />
-        {active.blurb}
-        <br />
-        Audio engine arrives next — files will stream from Vercel Blob and
-        cache on-device for offline, lifelong use.
-      </p>
     </main>
   );
 }
