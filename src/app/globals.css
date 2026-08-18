@@ -23,89 +23,77 @@ body {
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     sans-serif;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 main {
   min-height: 100dvh;
+  position: relative;
+}
+
+/* --- full-screen generative visualizer --- */
+.viz {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 0;
+}
+
+/* --- overlay chrome --- */
+.wordmark {
+  position: fixed;
+  top: 1.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+  letter-spacing: 0.5em;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.hud {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 3rem;
-  padding: 2rem 1rem;
-  position: relative;
-}
-
-/* --- central orb: the only luminous object --- */
-.orb {
-  width: min(46vmin, 300px);
-  height: min(46vmin, 300px);
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 42% 38%,
-    rgba(214, 40, 52, 0.85) 0%,
-    rgba(122, 14, 22, 0.55) 34%,
-    rgba(46, 5, 9, 0.4) 62%,
-    rgba(5, 5, 5, 0) 72%
+  gap: 1.1rem;
+  padding: 1.2rem 1rem calc(1.6rem + env(safe-area-inset-bottom));
+  background: linear-gradient(
+    to top,
+    rgba(5, 5, 5, 0.88) 0%,
+    rgba(5, 5, 5, 0.55) 55%,
+    rgba(5, 5, 5, 0) 100%
   );
-  filter: blur(2px);
-  animation: breathe 9s ease-in-out infinite;
-  position: relative;
-}
-
-.orb::after {
-  content: "";
-  position: absolute;
-  inset: -18%;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(177, 18, 27, 0.14) 0%,
-    rgba(5, 5, 5, 0) 65%
-  );
-  animation: breathe 9s ease-in-out infinite reverse;
-}
-
-@keyframes breathe {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 0.85;
-  }
-  50% {
-    transform: scale(1.07);
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .orb,
-  .orb::after {
-    animation: none;
-  }
 }
 
 /* --- mode ring: circular buttons only, no squares anywhere --- */
 .modes {
   display: flex;
-  gap: 1.4rem;
+  gap: 1.2rem;
   flex-wrap: wrap;
   justify-content: center;
 }
 
 .mode {
-  width: 86px;
-  height: 86px;
+  width: 76px;
+  height: 76px;
   border-radius: 50%;
   border: 1px solid rgba(177, 18, 27, 0.35);
   background: radial-gradient(
     circle at 50% 40%,
     rgba(177, 18, 27, 0.1),
-    rgba(5, 5, 5, 0.2)
+    rgba(5, 5, 5, 0.35)
   );
   color: var(--fg-dim);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   cursor: pointer;
@@ -130,22 +118,22 @@ main {
 .session {
   text-align: center;
   color: var(--fg-dim);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   letter-spacing: 0.06em;
-  line-height: 1.9;
+  line-height: 1.7;
   max-width: 34rem;
 }
 
 .session strong {
+  display: block;
   color: var(--fg);
   font-weight: 500;
+  font-size: 0.95rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-bottom: 0.15rem;
 }
 
-.wordmark {
-  position: absolute;
-  top: 1.6rem;
-  letter-spacing: 0.5em;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  color: var(--fg-dim);
+.session .blurb {
+  opacity: 0.85;
 }
