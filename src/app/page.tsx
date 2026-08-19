@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Visualizer, { type VisualMode } from "../components/Visualizer";
 
 type Mode = VisualMode;
@@ -31,7 +31,75 @@ const MODES: { id: Mode; label: string; blurb: string }[] = [
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>("focus");
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const scrollTimer = useRef<number | null>(null);
   const active = MODES.find((m) => m.id === mode)!;
+
+  const centerOf = (el: HTMLElement) => el.offsetLeft + el.offsetWidth / 2;
+
+  const nearestMode = (): Mode => {
+    const track = trackRef.current;
+    if (!track) return mode;
+    const center = track.scrollLeft + track.clientWidth / 2;
+    let best: Mode = mode;
+    let bestD = Number.POSITIVE_INFINITY;
+    track.querySelectorAll<HTMLElement>("[data-mode]").forEach((el) => {
+      const d = Math.abs(centerOf(el) - center);
+      if (d < bestD) {
+        bestD = d;
+        best = el.dataset.mode as Mode;
+      }
+    });
+    return best;
+  };
+
+  // while the user scrolls the bar, the item nearest the center becomes active
+  const onScroll = () => {
+    if (scrollTimer.current !== null) window.clearTimeout(scrollTimer.current);
+    scrollTimer.current = window.setTimeout(() => {
+      const m = nearestMode();
+      setMode((prev) => (prev === m ? prev : m));
+    }, 80);
+  };
+
+  const scrollTo = (id: Mode) => {
+    const track = trackRef.current;
+    const el = track?.querySelector<HTMLElement>(`[data-mode="${id}"]`);
+    if (!track || !el) return;
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+    track.scrollTo({
+      left: centerOf(el) - track.clientWidth / 2,
+      behavior: reduce ? "auto" : "smooth",
+    });
+    setMode(id);
+  };
+
+  // center the initial mode once mounted
+  useEffect(() => {
+    const track = trackRef.current;
+    const el = track?.querySelector<HTMLElement>(`[data-mode="${mode}"]`);
+    if (track && el) track.scrollLeft = centerOf(el) - track.clientWidth / 2;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const i = MODES.findIndex((m) => m.id === mode);
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      e.preventDefault();
+      scrollTo(MODES[Math.min(i + 1, MODES.length - 1)].id);
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      e.preventDefault();
+      scrollTo(MODES[Math.max(i - 1, 0)].id);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      scrollTo(MODES[0].id);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      scrollTo(MODES[MODES.length - 1].id);
+    }
+  };
 
   return (
     <main>
@@ -42,19 +110,29 @@ export default function Home() {
           <strong>{active.label}</strong>
           <span className="blurb">{active.blurb}</span>
         </p>
-        <div className="modes" role="group" aria-label="Soundscape mode">
+        <div
+          ref={trackRef}
+          className="modebar"
+          role="radiogroup"
+          aria-label="Soundscape mode"
+          tabIndex={0}
+          onScroll={onScroll}
+          onKeyDown={onKeyDown}
+        >
           {MODES.map((m) => (
-            <button
+            <span
               key={m.id}
-              type="button"
-              className="mode"
-              aria-pressed={m.id === mode}
-              onClick={() => setMode(m.id)}
+              data-mode={m.id}
+              role="radio"
+              aria-checked={m.id === mode}
+              className="modeitem"
+              onClick={() => scrollTo(m.id)}
             >
               {m.label}
-            </button>
+            </span>
           ))}
         </div>
+        <span className="modedot" aria-hidden="true" />
       </div>
     </main>
   );

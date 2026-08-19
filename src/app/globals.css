@@ -64,7 +64,7 @@ main {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1.1rem;
+  gap: 0.9rem;
   padding: 1.2rem 1rem calc(1.6rem + env(safe-area-inset-bottom));
   background: linear-gradient(
     to top,
@@ -74,44 +74,84 @@ main {
   );
 }
 
-/* --- mode ring: circular buttons only, no squares anywhere --- */
-.modes {
+/* --- mode bar: horizontally scrollable selector.
+       Not buttons; no squares, no squircles. The item scrolled to the
+       center becomes the active mode; the circular dot marks the center. --- */
+.modebar {
+  width: min(100%, 30rem);
   display: flex;
-  gap: 1.2rem;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-
-.mode {
-  width: 76px;
-  height: 76px;
-  border-radius: 50%;
-  border: 1px solid rgba(177, 18, 27, 0.35);
-  background: radial-gradient(
-    circle at 50% 40%,
-    rgba(177, 18, 27, 0.1),
-    rgba(5, 5, 5, 0.35)
+  gap: 3.4rem;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding: 0.55rem calc(50% - 2.4rem);
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 22%,
+    #000 78%,
+    transparent 100%
   );
-  color: var(--fg-dim);
-  font-size: 0.72rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: color 0.4s, border-color 0.4s, box-shadow 0.6s;
+  mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 22%,
+    #000 78%,
+    transparent 100%
+  );
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  cursor: grab;
 }
 
-.mode:hover,
-.mode:focus-visible {
-  color: var(--fg);
-  border-color: rgba(214, 40, 52, 0.8);
-  box-shadow: 0 0 28px rgba(177, 18, 27, 0.25);
+.modebar::-webkit-scrollbar {
+  display: none;
+}
+
+.modebar:focus-visible {
   outline: none;
+  filter: drop-shadow(0 0 14px rgba(214, 40, 52, 0.55));
 }
 
-.mode[aria-pressed="true"] {
+.modeitem {
+  scroll-snap-align: center;
+  flex: 0 0 auto;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 0.78rem;
+  color: var(--fg-dim);
+  opacity: 0.55;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: color 0.4s, opacity 0.4s, text-shadow 0.6s;
+}
+
+.modeitem:hover {
+  opacity: 0.85;
+}
+
+.modeitem[aria-checked="true"] {
   color: var(--fg);
-  border-color: var(--red);
-  box-shadow: 0 0 34px rgba(177, 18, 27, 0.4);
+  opacity: 1;
+  text-shadow: 0 0 18px rgba(177, 18, 27, 0.9);
+}
+
+/* circular center marker under the bar */
+.modedot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 12px rgba(177, 18, 27, 0.8);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modeitem {
+    transition: none;
+  }
+  .modebar {
+    scroll-behavior: auto;
+  }
 }
 
 /* --- session readout --- */

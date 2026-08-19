@@ -1,0 +1,13 @@
+{
+ "source": "user-supplied Endel Focus screen recording (20 min); trained on minutes 1-8 only",
+ "method": "AAC bitstream analysis (frame bit-allocation, global_gain, window sequences) - no decoded audio, no Endel content reproduced",
+ "sr": 44100,
+ "bpm_bits": 60.1,
+ "conf_sz": 0.34,
+ "onset_per_sec": 0.0,
+ "short_windows": 0,
+ "slow_cycle_s": 25.9,
+ "gg_mean": 153.0,
+ "gg_std": 2.8,
+ "dyn_ratio": 1.21
+}
