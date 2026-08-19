@@ -30,7 +30,6 @@ body {
 
 main {
   position: relative;
-  z-index: 1;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -48,6 +47,8 @@ main {
 
 /* --- overlay chrome, in normal flow so the page can scroll --- */
 .wordmark {
+  position: relative;
+  z-index: 2;
   align-self: center;
   margin-top: 1.6rem;
   letter-spacing: 0.5em;
@@ -58,6 +59,8 @@ main {
 }
 
 .hud {
+  position: relative;
+  z-index: 2;
   margin-top: auto;
   width: 100%;
   display: flex;
