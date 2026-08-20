@@ -76,14 +76,16 @@ main {
 
 /* --- mode bar: horizontally scrollable selector.
        Not buttons; no squares, no squircles. The item scrolled to the
-       center becomes the active mode; the circular dot marks the center. --- */
+       center becomes the active mode; the circular dot marks the center.
+       Full 50% edge padding lets ANY label (they differ in width) land
+       exactly on the snapport center, i.e. directly over the red dot. --- */
 .modebar {
   width: min(100%, 30rem);
   display: flex;
   gap: 3.4rem;
   overflow-x: auto;
   scroll-snap-type: x mandatory;
-  padding: 0.55rem calc(50% - 2.4rem);
+  padding: 0.55rem 50%;
   -webkit-mask-image: linear-gradient(
     to right,
     transparent 0%,
