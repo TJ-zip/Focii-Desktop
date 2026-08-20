@@ -31,20 +31,36 @@ const MODES: { id: Mode; label: string; blurb: string }[] = [
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>("focus");
+  const modeRef = useRef<Mode>("focus");
   const trackRef = useRef<HTMLDivElement | null>(null);
   const scrollTimer = useRef<number | null>(null);
+  const animUntil = useRef(0); // ignore nearest-center while a programmatic smooth scroll runs
+  const wheelAccum = useRef(0);
+  const wheelLock = useRef(0);
   const active = MODES.find((m) => m.id === mode)!;
 
-  const centerOf = (el: HTMLElement) => el.offsetLeft + el.offsetWidth / 2;
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  // Center of an item in the track's CONTENT coordinates.
+  // Measured with bounding rects so it is independent of which ancestor
+  // happens to be the offsetParent (the old offsetLeft-based math was
+  // relative to the full-width fixed .hud, which skewed selection left).
+  const centerOf = (track: HTMLElement, el: HTMLElement) => {
+    const t = track.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    return r.left - t.left + track.scrollLeft + r.width / 2;
+  };
 
   const nearestMode = (): Mode => {
     const track = trackRef.current;
-    if (!track) return mode;
+    if (!track) return modeRef.current;
     const center = track.scrollLeft + track.clientWidth / 2;
-    let best: Mode = mode;
+    let best: Mode = modeRef.current;
     let bestD = Number.POSITIVE_INFINITY;
     track.querySelectorAll<HTMLElement>("[data-mode]").forEach((el) => {
-      const d = Math.abs(centerOf(el) - center);
+      const d = Math.abs(centerOf(track, el) - center);
       if (d < bestD) {
         bestD = d;
         best = el.dataset.mode as Mode;
@@ -55,6 +71,7 @@ export default function Home() {
 
   // while the user scrolls the bar, the item nearest the center becomes active
   const onScroll = () => {
+    if (performance.now() < animUntil.current) return;
     if (scrollTimer.current !== null) window.clearTimeout(scrollTimer.current);
     scrollTimer.current = window.setTimeout(() => {
       const m = nearestMode();
@@ -69,8 +86,9 @@ export default function Home() {
     const reduce = window.matchMedia(
       "(prefers-reduced-motion: reduce)"
     ).matches;
+    animUntil.current = performance.now() + (reduce ? 0 : 600);
     track.scrollTo({
-      left: centerOf(el) - track.clientWidth / 2,
+      left: centerOf(track, el) - track.clientWidth / 2,
       behavior: reduce ? "auto" : "smooth",
     });
     setMode(id);
@@ -80,7 +98,32 @@ export default function Home() {
   useEffect(() => {
     const track = trackRef.current;
     const el = track?.querySelector<HTMLElement>(`[data-mode="${mode}"]`);
-    if (track && el) track.scrollLeft = centerOf(el) - track.clientWidth / 2;
+    if (track && el) track.scrollLeft = centerOf(track, el) - track.clientWidth / 2;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // mouse wheel over the bar shifts one mode per gesture.
+  // Native (non-passive) listener so vertical wheel can be intercepted;
+  // horizontal trackpad deltas fall through to native scrolling.
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track) return;
+    const onWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return; // trackpad swipe
+      e.preventDefault();
+      const now = performance.now();
+      if (now < wheelLock.current) return;
+      wheelAccum.current += e.deltaY;
+      if (Math.abs(wheelAccum.current) < 24) return;
+      const dir = wheelAccum.current > 0 ? 1 : -1;
+      wheelAccum.current = 0;
+      wheelLock.current = now + 280;
+      const i = MODES.findIndex((m) => m.id === modeRef.current);
+      const next = MODES[Math.min(Math.max(i + dir, 0), MODES.length - 1)].id;
+      if (next !== modeRef.current) scrollTo(next);
+    };
+    track.addEventListener("wheel", onWheel, { passive: false });
+    return () => track.removeEventListener("wheel", onWheel);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
