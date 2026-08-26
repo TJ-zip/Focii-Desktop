@@ -14,7 +14,7 @@
 
 html,
 body {
-  height: 100%;
+  min-height: 100%;
 }
 
 body {
@@ -23,15 +23,19 @@ body {
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     sans-serif;
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
+  /* Vertical scrolling must stay available: on short viewports the HUD is
+     taller than the screen. Only horizontal overflow is suppressed. */
+  overflow-x: hidden;
 }
 
 main {
-  min-height: 100dvh;
   position: relative;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
 }
 
-/* --- full-screen generative visualizer --- */
+/* --- full-screen generative visualizer (only fixed layer) --- */
 .viz {
   position: fixed;
   inset: 0;
@@ -41,31 +45,29 @@ main {
   z-index: 0;
 }
 
-/* --- overlay chrome --- */
+/* --- overlay chrome, in normal flow so the page can scroll --- */
 .wordmark {
-  position: fixed;
-  top: 1.6rem;
-  left: 50%;
-  transform: translateX(-50%);
+  position: relative;
+  z-index: 2;
+  align-self: center;
+  margin-top: 1.6rem;
   letter-spacing: 0.5em;
   font-size: 0.7rem;
   text-transform: uppercase;
   color: var(--fg-dim);
-  z-index: 2;
   pointer-events: none;
 }
 
 .hud {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  position: relative;
   z-index: 2;
+  margin-top: auto;
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 1.1rem;
-  padding: 1.2rem 1rem calc(1.6rem + env(safe-area-inset-bottom));
+  padding: 2.4rem 1rem calc(1.6rem + env(safe-area-inset-bottom));
   background: linear-gradient(
     to top,
     rgba(5, 5, 5, 0.88) 0%,
@@ -112,6 +114,16 @@ main {
   color: var(--fg);
   border-color: var(--red);
   box-shadow: 0 0 34px rgba(177, 18, 27, 0.4);
+}
+
+@media (max-width: 420px) {
+  .modes {
+    gap: 0.9rem;
+  }
+  .mode {
+    width: 64px;
+    height: 64px;
+  }
 }
 
 /* --- session readout --- */
