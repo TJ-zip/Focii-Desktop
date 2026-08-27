@@ -97,8 +97,8 @@ export default function Home() {
     modeRef.current = mode;
   }, [mode]);
 
-  // Read on the client only: touching localStorage during render would差 the
-  // server and client markup apart and produce a hydration mismatch.
+  // Read on the client only: touching localStorage during render would drive
+  // the server and client markup apart and produce a hydration mismatch.
   useEffect(() => {
     try {
       setHasStarted(window.localStorage.getItem(STARTED_KEY) === "1");
