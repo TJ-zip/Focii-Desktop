@@ -76,70 +76,258 @@ main {
   );
 }
 
-/* --- transport: circular play/stop control (circles only, no squares) --- */
-.play {
+/* --- command corner -----------------------------------------------------
+   Borderless by design: it is a label, not a button-looking thing. It sits
+   above the visualizer but must never trap pointer events across the whole
+   corner, hence pointer-events on the wrapper. --- */
+.cmdcorner {
+  position: fixed;
+  top: 1.15rem;
+  right: 1.25rem;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.cmdbtn {
   position: relative;
-  width: 68px;
-  height: 68px;
-  border-radius: 50%;
-  border: 1px solid var(--red-dim);
-  background: radial-gradient(
-    circle at 50% 50%,
-    rgba(177, 18, 27, 0.18) 0%,
-    rgba(177, 18, 27, 0.04) 60%,
-    transparent 100%
-  );
+  pointer-events: auto;
+  border: 0;
+  background: none;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 0.68rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  padding: 0.35rem 0.15rem;
+  cursor: pointer;
+  transition: color 0.35s, text-shadow 0.5s;
+}
+
+.cmdbtn:hover,
+.cmdbtn:focus-visible {
   color: var(--fg);
+  text-shadow: 0 0 16px rgba(177, 18, 27, 0.75);
+}
+
+.cmdbtn:focus-visible {
+  outline: 1px solid var(--red);
+  outline-offset: 5px;
+}
+
+/* the blob. Hidden from the a11y tree (aria-hidden in the markup) because
+   the same information reaches screen readers through the dialog itself. */
+.cmdtip {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  white-space: nowrap;
+  padding: 0.32rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(177, 18, 27, 0.16);
+  border: 1px solid rgba(177, 18, 27, 0.45);
+  color: var(--fg);
+  font-size: 0.6rem;
+  letter-spacing: 0.16em;
+  opacity: 0;
+  transform: translateY(-3px);
+  pointer-events: none;
+  transition: opacity 0.28s ease, transform 0.28s ease;
+}
+
+.cmdbtn:hover .cmdtip,
+.cmdbtn:focus-visible .cmdtip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* --- command centre ----------------------------------------------------- */
+.cmdscrim {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
   display: grid;
   place-items: center;
-  cursor: pointer;
-  transition: border-color 0.35s, box-shadow 0.45s, transform 0.25s;
+  padding: 1.25rem;
+  background: rgba(5, 5, 5, 0.72);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  animation: cmdfade 0.22s ease both;
 }
 
-.play:hover:not(:disabled) {
-  border-color: var(--red);
-  box-shadow: 0 0 22px rgba(177, 18, 27, 0.45);
-}
-
-.play:active:not(:disabled) {
-  transform: scale(0.96);
-}
-
-.play:focus-visible {
-  outline: 2px solid var(--red);
-  outline-offset: 4px;
-}
-
-.play:disabled {
-  opacity: 0.5;
-  cursor: progress;
-}
-
-.play[aria-pressed="true"] {
-  border-color: var(--red);
-  box-shadow: 0 0 26px rgba(177, 18, 27, 0.55);
-}
-
-/* play: triangle. stop: two rounded bars. Neither is a square. */
-.glyph.go {
-  width: 0;
-  height: 0;
-  margin-left: 5px;
-  border-top: 11px solid transparent;
-  border-bottom: 11px solid transparent;
-  border-left: 18px solid var(--fg);
-}
-
-.glyph.stop {
-  width: 16px;
-  height: 18px;
+.cmdpanel {
+  width: min(100%, 34rem);
+  max-height: min(80dvh, 40rem);
+  overflow-y: auto;
+  border: 1px solid rgba(177, 18, 27, 0.35);
+  border-radius: 14px;
   background: linear-gradient(
-    to right,
-    var(--fg) 0 5px,
-    transparent 5px 11px,
-    var(--fg) 11px 16px
+    to bottom,
+    rgba(14, 12, 12, 0.97),
+    rgba(7, 6, 6, 0.97)
   );
-  border-radius: 2px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65);
+  padding: 1.5rem 1.6rem 1.35rem;
+  animation: cmdrise 0.26s ease both;
+}
+
+.cmdpanel:focus {
+  outline: none;
+}
+
+.cmdhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.1rem;
+}
+
+.cmdhead h2 {
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.cmdclose {
+  border: 0;
+  background: none;
+  color: var(--fg-dim);
+  font-size: 1.35rem;
+  line-height: 1;
+  padding: 0.15rem 0.4rem;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 0.3s;
+}
+
+.cmdclose:hover {
+  color: var(--fg);
+}
+
+.cmdclose:focus-visible {
+  outline: 1px solid var(--red);
+  outline-offset: 3px;
+}
+
+.cmdlist {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.cmdrow {
+  display: grid;
+  grid-template-columns: 8.5rem 1fr;
+  gap: 1rem;
+  align-items: baseline;
+  padding: 0.7rem 0.2rem;
+  border-top: 1px solid rgba(232, 228, 224, 0.07);
+}
+
+.cmdrow:first-child {
+  border-top: 0;
+}
+
+.cmdkeys {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.cmdkeywrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.cmdplus {
+  color: var(--fg-dim);
+  font-size: 0.62rem;
+  opacity: 0.7;
+}
+
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg);
+  background: rgba(232, 228, 224, 0.07);
+  border: 1px solid rgba(232, 228, 224, 0.16);
+  border-bottom-color: rgba(232, 228, 224, 0.28);
+  border-radius: 5px;
+  padding: 0.2rem 0.45rem;
+  white-space: nowrap;
+}
+
+.cmdtext {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+}
+
+.cmdlabel {
+  color: var(--fg);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+}
+
+.cmddetail {
+  color: var(--fg-dim);
+  font-size: 0.74rem;
+  line-height: 1.6;
+}
+
+@keyframes cmdfade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes cmdrise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* --- first-run hint ------------------------------------------------------
+   Shown only until the first successful start. Breathes slowly so the eye
+   finds it without it demanding attention. --- */
+.firsthint {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  animation: hintbreathe 4.5s ease-in-out infinite;
+}
+
+.firsthint kbd {
+  letter-spacing: 0.14em;
+}
+
+@keyframes hintbreathe {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.95;
+  }
 }
 
 .readout {
@@ -235,6 +423,10 @@ main {
     font-size: 0.72rem;
     letter-spacing: 0.18em;
   }
+  .cmdrow {
+    grid-template-columns: 1fr;
+    gap: 0.4rem;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -244,8 +436,17 @@ main {
   .modebar {
     scroll-behavior: auto;
   }
-  .play {
+  .cmdbtn,
+  .cmdtip {
     transition: none;
+  }
+  .cmdscrim,
+  .cmdpanel {
+    animation: none;
+  }
+  .firsthint {
+    animation: none;
+    opacity: 0.85;
   }
 }
 
