@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Visualizer, { type VisualMode } from "../components/Visualizer";
+import { SoundscapeEngine } from "../audio/engine";
+import { sectionAt } from "../audio/presets";
 
 type Mode = VisualMode;
 
@@ -29,6 +31,16 @@ const MODES: { id: Mode; label: string; blurb: string }[] = [
   },
 ];
 
+function formatClock(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(sec).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
 export default function Home() {
   const [mode, setMode] = useState<Mode>("focus");
   const modeRef = useRef<Mode>("focus");
@@ -39,9 +51,65 @@ export default function Home() {
   const wheelLock = useRef(0);
   const active = MODES.find((m) => m.id === mode)!;
 
+  const engineRef = useRef<SoundscapeEngine | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [session, setSession] = useState({ name: "", elapsed: 0 });
+
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
+
+  // The engine crossfades between modes without restarting the session clock,
+  // so changing mode mid-session keeps the Initiation -> Deep progression.
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (engine && engine.running) engine.setMode(mode);
+  }, [mode]);
+
+  const togglePlay = useCallback(async () => {
+    const engine = engineRef.current;
+    if (engine && engine.running) {
+      engine.stop();
+      engineRef.current = null;
+      setPlaying(false);
+      setSession({ name: "", elapsed: 0 });
+      return;
+    }
+    // Constructed here, inside the click handler: browsers only allow an
+    // AudioContext to start from a user gesture.
+    setStarting(true);
+    try {
+      const next = new SoundscapeEngine();
+      await next.start(modeRef.current);
+      engineRef.current = next;
+      setPlaying(true);
+    } catch {
+      setPlaying(false);
+    } finally {
+      setStarting(false);
+    }
+  }, []);
+
+  // session readout
+  useEffect(() => {
+    if (!playing) return;
+    const id = window.setInterval(() => {
+      const engine = engineRef.current;
+      if (!engine || !engine.running) return;
+      const e = engine.elapsed;
+      setSession({ name: sectionAt(e).name, elapsed: e });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [playing]);
+
+  // stop audio when the page unmounts
+  useEffect(() => {
+    return () => {
+      engineRef.current?.stop();
+      engineRef.current = null;
+    };
+  }, []);
 
   // Center of an item in the track's CONTENT coordinates.
   // Measured with bounding rects, so it does not depend on which ancestor
@@ -155,6 +223,24 @@ export default function Home() {
           <strong>{active.label}</strong>
           <span className="blurb">{active.blurb}</span>
         </p>
+
+        <button
+          type="button"
+          className="play"
+          onClick={togglePlay}
+          aria-pressed={playing}
+          aria-label={playing ? "Stop soundscape" : "Play soundscape"}
+          disabled={starting}
+        >
+          <span className={playing ? "glyph stop" : "glyph go"} aria-hidden="true" />
+        </button>
+
+        <p className="readout" aria-live="polite">
+          {playing
+            ? `${session.name} \u00b7 ${formatClock(session.elapsed)}`
+            : "\u00a0"}
+        </p>
+
         <div
           ref={trackRef}
           className="modebar"
