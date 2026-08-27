@@ -27,6 +27,14 @@
  *
  * 4. AUTOPLAY POLICY. The AudioContext must be constructed and resumed inside
  *    a user gesture, so construction is deferred to start().
+ *
+ * 5. ONE PURPOSE PER AudioParam. A layer has two gain stages that look
+ *    redundant but are not: `bus` carries the swell modulation, `out` carries
+ *    the fade. They must stay separate, because connecting a modulation source
+ *    to an AudioParam SUMS with that param's scheduled value. Routing the
+ *    swell into the fade param meant a layer faded to +/-0.1 rather than to 0,
+ *    so disposing it truncated a non-zero waveform and produced a click. The
+ *    fade param must be owned by the fade alone.
  */
 
 import {
@@ -45,6 +53,20 @@ const SCHEDULE_INTERVAL = 250;
 const MODE_FADE = 2.5;
 /** Fade applied on start and stop, in seconds. */
 const EDGE_FADE = 1.2;
+
+/**
+ * Grace period between a fade reaching zero and the layer being torn down.
+ * Only needs to cover clock imprecision now that the fade truly reaches 0;
+ * it is not masking any residual signal.
+ */
+const DISPOSE_MARGIN = 0.25;
+
+/** Length of the settle tick, in seconds. */
+const TICK_LEN = 0.05;
+/** Peak gain of the settle tick. Deliberately near the noise floor. */
+const TICK_GAIN = 0.055;
+/** Low-pass applied to the settle tick, in Hz, so it reads soft not sharp. */
+const TICK_CUT = 2600;
 
 /** Sample count used for generated envelope curves. */
 const CURVE_STEPS = 128;
@@ -96,8 +118,17 @@ function mulberry32(seed: number): () => number {
 }
 
 interface Layer {
-  /** Everything for one mode hangs off this node so it can be faded as a unit. */
+  /**
+   * Fade node. Its gain is owned exclusively by start/crossfade ramps, so it
+   * reaches exactly 0 and the layer can be disposed without a discontinuity.
+   */
   out: GainNode;
+  /**
+   * Content bus, sitting between every sound source and `out`. Carries the
+   * slow session swell modulation. Everything a layer produces routes through
+   * here so the swell applies to the layer as a whole.
+   */
+  bus: GainNode;
   sources: AudioScheduledSourceNode[];
   preset: Preset;
   root: number;
@@ -122,7 +153,15 @@ export interface EngineOptions {
   seed?: number;
   /** Master volume 0..1. Default 0.9. */
   volume?: number;
+  /**
+   * Fired when a mode change has fully settled, at the same instant as the
+   * audible settle tick. Lets the UI resolve a visual transition in sync with
+   * what is heard rather than guessing at a duration.
+   */
+  onSettle?: (mode: Mode) => void;
 }
+
+type ResolvedOptions = Required<Omit<EngineOptions, "onSettle">>;
 
 export class SoundscapeEngine {
   private ctx: AudioContext | null = null;
@@ -130,9 +169,14 @@ export class SoundscapeEngine {
   private layers: Layer[] = [];
   private timer: number | null = null;
   private mode: Mode = "focus";
-  private opts: Required<EngineOptions>;
+  private opts: ResolvedOptions;
+  private onSettle: ((mode: Mode) => void) | null;
   private gauss = gaussianCurve();
   private noiseBufferCache: AudioBuffer | null = null;
+  /** Oscillators of a scheduled-but-not-yet-sounded settle tick. */
+  private tickSources: AudioScheduledSourceNode[] = [];
+  /** Timer that mirrors the scheduled tick back to the UI callback. */
+  private tickTimer: number | null = null;
 
   constructor(options: EngineOptions = {}) {
     this.opts = {
@@ -140,6 +184,7 @@ export class SoundscapeEngine {
       seed: options.seed ?? Math.floor(Math.random() * 1e9),
       volume: options.volume ?? 0.9,
     };
+    this.onSettle = options.onSettle ?? null;
   }
 
   get running(): boolean {
@@ -216,17 +261,25 @@ export class SoundscapeEngine {
     for (const layer of this.layers) {
       if (layer.stopping) continue;
       layer.stopping = true;
+      // `out.gain` carries nothing but this ramp, so it genuinely arrives at 0.
       layer.out.gain.cancelScheduledValues(now);
       layer.out.gain.setValueAtTime(layer.out.gain.value, now);
       layer.out.gain.linearRampToValueAtTime(0, now + MODE_FADE);
       window.setTimeout(
         () => this.disposeLayer(layer),
-        (MODE_FADE + 0.5) * 1000
+        (MODE_FADE + DISPOSE_MARGIN) * 1000
       );
     }
     // The new mode inherits the session offset, so switching mode does not
     // restart Initiation -- the session keeps progressing.
-    this.layers.push(this.buildLayer(mode, carriedPhase, false));
+    const next = this.buildLayer(mode, carriedPhase, false);
+    this.layers.push(next);
+
+    // Mark the arrival, not the departure: the tick lands when the crossfade
+    // has finished, so it reads as "this mode has set in", not as a transition
+    // artefact. Scheduling it here also cancels any tick still pending from a
+    // mode change the user scrolled straight past.
+    this.scheduleSettleTick(now + MODE_FADE, next.root, mode);
   }
 
   stop(): void {
@@ -234,6 +287,7 @@ export class SoundscapeEngine {
       window.clearInterval(this.timer);
       this.timer = null;
     }
+    this.cancelSettleTick();
     const ctx = this.ctx;
     const master = this.master;
     if (!ctx || !master) return;
@@ -263,11 +317,95 @@ export class SoundscapeEngine {
 
   // -------------------------------------------------------------------------
 
+  /**
+   * A soft confirmation tone marking the completion of a mode change.
+   *
+   * Pitched at 4x and 6x the new mode's quantised root (two octaves, plus a
+   * fifth above that) so it is consonant with whatever is already sounding
+   * rather than an arbitrary beep. Enveloped with the same gaussian used by
+   * the pulse layer, so like everything else in this engine it has no
+   * instantaneous gain step and cannot read as a sharp attack.
+   */
+  private scheduleSettleTick(at: number, root: number, mode: Mode): void {
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    this.cancelSettleTick();
+
+    const env = ctx.createGain();
+    // No setValueAtTime before the curve: the curve is already 0 at index 0,
+    // and an automation event inside a curve's window is a spec violation.
+    env.gain.setValueCurveAtTime(this.gauss, at, TICK_LEN);
+
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = TICK_CUT;
+
+    const amp = ctx.createGain();
+    amp.gain.value = TICK_GAIN;
+
+    const a = ctx.createOscillator();
+    a.type = "sine";
+    a.frequency.value = root * 4;
+
+    const b = ctx.createOscillator();
+    b.type = "sine";
+    b.frequency.value = root * 6;
+    const bGain = ctx.createGain();
+    bGain.gain.value = 0.35;
+
+    a.connect(env);
+    b.connect(bGain).connect(env);
+    env.connect(lp).connect(amp).connect(master);
+
+    a.start(at);
+    b.start(at);
+    a.stop(at + TICK_LEN);
+    b.stop(at + TICK_LEN);
+    a.onended = () => {
+      a.disconnect();
+      b.disconnect();
+      bGain.disconnect();
+      env.disconnect();
+      lp.disconnect();
+      amp.disconnect();
+      this.tickSources = this.tickSources.filter((s) => s !== a && s !== b);
+    };
+
+    this.tickSources = [a, b];
+
+    if (this.onSettle) {
+      const delay = Math.max(0, (at - ctx.currentTime) * 1000);
+      this.tickTimer = window.setTimeout(() => {
+        this.tickTimer = null;
+        this.onSettle?.(mode);
+      }, delay);
+    }
+  }
+
+  /** Silences a pending settle tick, e.g. when the user keeps scrolling. */
+  private cancelSettleTick(): void {
+    for (const s of this.tickSources) {
+      try {
+        s.stop();
+      } catch {
+        // already stopped or never started
+      }
+      s.disconnect();
+    }
+    this.tickSources = [];
+    if (this.tickTimer !== null) {
+      window.clearTimeout(this.tickTimer);
+      this.tickTimer = null;
+    }
+  }
+
   private buildLayer(mode: Mode, phase: number, immediate: boolean): Layer {
     const ctx = this.ctx!;
     const p = PRESETS[mode];
     const now = ctx.currentTime;
 
+    // Fade stage. Nothing else may touch this param -- see design note 5.
     const out = ctx.createGain();
     out.gain.value = immediate ? 1 : 0;
     if (!immediate) {
@@ -276,17 +414,23 @@ export class SoundscapeEngine {
     }
     out.connect(this.master!);
 
-    // Slow session swell, applied to the whole layer.
+    // Content bus. Slow session swell modulates this instead of the fade, so
+    // the swell survives for the life of the layer without ever preventing it
+    // from reaching silence.
+    const bus = ctx.createGain();
+    bus.gain.value = 1;
+    bus.connect(out);
+
     const swellLfo = ctx.createOscillator();
     swellLfo.frequency.value = 1 / p.swell;
     const swellAmt = ctx.createGain();
     swellAmt.gain.value = 0.1;
-    swellLfo.connect(swellAmt).connect(out.gain);
+    swellLfo.connect(swellAmt).connect(bus.gain);
     swellLfo.start(now);
 
     const intensityGain = ctx.createGain();
     intensityGain.gain.value = sectionAt(phase).intensity;
-    intensityGain.connect(out);
+    intensityGain.connect(bus);
 
     const root = quantizeRoot(p.root, p.bpm);
     const freqs: number[] = [];
@@ -302,7 +446,7 @@ export class SoundscapeEngine {
     sub.frequency.value = f0;
     const subGain = ctx.createGain();
     subGain.gain.value = p.sub.gain;
-    sub.connect(subGain).connect(out);
+    sub.connect(subGain).connect(bus);
 
     // Phase modulation in the offline renderer is an index in radians; the
     // equivalent frequency deviation is index / period Hz.
@@ -327,7 +471,7 @@ export class SoundscapeEngine {
     const panAmt = ctx.createGain();
     panAmt.gain.value = 0.7;
     panLfo.connect(panAmt).connect(panner.pan);
-    sub2.connect(sub2Gain).connect(panner).connect(out);
+    sub2.connect(sub2Gain).connect(panner).connect(bus);
 
     sub.start(now);
     sub2.start(now);
@@ -351,6 +495,7 @@ export class SoundscapeEngine {
     const beat = p.bpm > 0 ? 60 / p.bpm : 0;
     return {
       out,
+      bus,
       sources,
       preset: p,
       root,
@@ -425,7 +570,9 @@ export class SoundscapeEngine {
       const pan = alt > 0 ? (k % 2 === 0 ? -alt : alt) * 2 : 0;
 
       const g = ctx.createGain();
-      g.gain.setValueAtTime(0, t0);
+      // The curve is already 0 at index 0; an explicit setValueAtTime here
+      // would be an automation event inside the curve's own window, which the
+      // spec makes a NotSupportedError.
       g.gain.setValueCurveAtTime(this.gauss, t0, dur);
 
       const amp = ctx.createGain();
@@ -443,7 +590,7 @@ export class SoundscapeEngine {
 
       thump.connect(g);
       body.connect(bodyGain).connect(g);
-      g.connect(amp).connect(pn).connect(layer.out);
+      g.connect(amp).connect(pn).connect(layer.bus);
 
       thump.start(t0);
       body.start(t0);
@@ -490,7 +637,7 @@ export class SoundscapeEngine {
       osc2Gain.gain.value = 0.28;
 
       const env = ctx.createGain();
-      env.gain.setValueAtTime(0, t0);
+      // As above: no automation event inside the curve's window.
       env.gain.setValueCurveAtTime(
         raisedCosineCurve(p.pad.attackFrac),
         t0,
@@ -532,6 +679,7 @@ export class SoundscapeEngine {
       s.disconnect();
     }
     layer.intensityGain.disconnect();
+    layer.bus.disconnect();
     layer.out.disconnect();
     this.layers = this.layers.filter((l) => l !== layer);
   }
