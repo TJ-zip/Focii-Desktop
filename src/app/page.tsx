@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Visualizer, { type VisualMode } from "../components/Visualizer";
 import CommandCenter from "../components/CommandCenter";
+import ModeDot, { type ArmState } from "../components/ModeDot";
 import { SoundscapeEngine } from "../audio/engine";
 import { sectionAt } from "../audio/presets";
 
@@ -34,6 +35,8 @@ const MODES: { id: Mode; label: string; blurb: string }[] = [
 
 /** Set once the user has successfully started a session on this device. */
 const STARTED_KEY = "soundscape.hasStarted";
+/** Set once the dot hint sequence has run all the way through, once. */
+const HINTS_KEY = "soundscape.hintsSeen";
 
 /**
  * Arrow-key arming.
@@ -53,6 +56,15 @@ const STARTED_KEY = "soundscape.hasStarted";
  */
 const ARM_WINDOW = 650;
 const ARM_IDLE = 2500;
+
+/**
+ * Space is "begin", not "toggle" - pressing it while already playing is
+ * deliberately inert. That inertness is a signal: someone pressing it twice
+ * in quick succession is asking a question. Two dead presses inside this
+ * window is the threshold at which the dot answers.
+ */
+const DEAD_SPACE_WINDOW = 1600;
+const DEAD_SPACE_TRIGGER = 2;
 
 function formatClock(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -81,8 +93,6 @@ function isTypingTarget(target: EventTarget | null): boolean {
     el.isContentEditable === true
   );
 }
-
-type ArmState = "idle" | "pending" | "armed";
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>("focus");
@@ -125,17 +135,30 @@ export default function Home() {
   const armTimer = useRef<number | null>(null);
   const [armState, setArmState] = useState<ArmState>("idle");
 
+  // Dot hint sequence. Same split as the arming state: refs for anything the
+  // key handler reads, state only for what renders.
+  const [hintRun, setHintRun] = useState(0);
+  const hintRunRef = useRef(0);
+  const hintsSeenRef = useRef(false);
+  const deadSpace = useRef({ n: 0, at: 0 });
+
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
+
+  useEffect(() => {
+    hintRunRef.current = hintRun;
+  }, [hintRun]);
 
   // Read on the client only: touching localStorage during render would drive
   // the server and client markup apart and produce a hydration mismatch.
   useEffect(() => {
     try {
       setHasStarted(window.localStorage.getItem(STARTED_KEY) === "1");
+      hintsSeenRef.current = window.localStorage.getItem(HINTS_KEY) === "1";
     } catch {
       setHasStarted(true); // private mode / storage blocked: just stay quiet
+      hintsSeenRef.current = true;
     }
   }, []);
 
@@ -186,6 +209,51 @@ export default function Home() {
     engineRef.current = null;
     setPlaying(false);
     setSession({ name: sectionAt(at).name, elapsed: at });
+  }, []);
+
+  // --- dot hints ----------------------------------------------------------
+
+  const markHintsSeen = useCallback(() => {
+    hintsSeenRef.current = true;
+    try {
+      window.localStorage.setItem(HINTS_KEY, "1");
+    } catch {
+      // storage unavailable; the sequence may offer itself again next visit
+    }
+  }, []);
+
+  /**
+   * Stop the sequence. `learned` is true when the user did the thing the
+   * hints were about to teach - pausing, or opening the command centre. In
+   * that case there is nothing left to say and the hints retire permanently.
+   * An arrow press only cancels: the user is busy, not taught.
+   */
+  const cancelHints = useCallback(
+    (learned: boolean) => {
+      if (hintRunRef.current === 0) return;
+      setHintRun(0);
+      deadSpace.current = { n: 0, at: 0 };
+      if (learned) markHintsSeen();
+    },
+    [markHintsSeen]
+  );
+
+  const finishHints = useCallback(() => {
+    setHintRun(0);
+    markHintsSeen();
+  }, [markHintsSeen]);
+
+  /** A space press that did nothing because the session was already running. */
+  const noteDeadSpace = useCallback(() => {
+    if (hintsSeenRef.current || hintRunRef.current > 0) return;
+    const now = performance.now();
+    const d = deadSpace.current;
+    d.n = now - d.at <= DEAD_SPACE_WINDOW ? d.n + 1 : 1;
+    d.at = now;
+    if (d.n >= DEAD_SPACE_TRIGGER) {
+      d.n = 0;
+      setHintRun((r) => r + 1);
+    }
   }, []);
 
   // Center of an item in the track's CONTENT coordinates.
@@ -281,7 +349,8 @@ export default function Home() {
       clearArmTimer();
 
       const live = a.armed && now - a.at <= ARM_IDLE;
-      const completesDouble = !a.armed && a.dir === dir && now - a.at <= ARM_WINDOW;
+      const completesDouble =
+        !a.armed && a.dir === dir && now - a.at <= ARM_WINDOW;
 
       if (live || completesDouble) {
         armRef.current = { armed: true, dir, at: now };
@@ -327,6 +396,7 @@ export default function Home() {
 
       if (e.shiftKey && e.code === "KeyC") {
         e.preventDefault();
+        cancelHints(true); // they found it; the hints have nothing left to add
         setCommandOpen((o) => !o);
         return;
       }
@@ -338,12 +408,18 @@ export default function Home() {
       if (e.code === "Space") {
         e.preventDefault(); // stop the page scrolling
         if (e.repeat) return;
+        const engine = engineRef.current;
+        if (engine && engine.running) {
+          noteDeadSpace();
+          return;
+        }
         void startAudio();
         return;
       }
 
       if (e.code === "KeyP" && !e.shiftKey) {
         e.preventDefault();
+        cancelHints(true);
         pauseAudio();
         return;
       }
@@ -351,23 +427,35 @@ export default function Home() {
       if (e.code === "ArrowRight" || e.code === "ArrowDown") {
         e.preventDefault();
         if (e.repeat) return; // holding the key must not rush the modes
+        cancelHints(false); // busy, not taught: the hints may return
         arrowStep(1);
       } else if (e.code === "ArrowLeft" || e.code === "ArrowUp") {
         e.preventDefault();
         if (e.repeat) return;
+        cancelHints(false);
         arrowStep(-1);
       } else if (e.code === "Home") {
         e.preventDefault();
+        cancelHints(false);
         scrollTo(MODES[0].id);
       } else if (e.code === "End") {
         e.preventDefault();
+        cancelHints(false);
         scrollTo(MODES[MODES.length - 1].id);
       }
     };
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [arrowStep, commandOpen, pauseAudio, scrollTo, startAudio]);
+  }, [
+    arrowStep,
+    cancelHints,
+    commandOpen,
+    noteDeadSpace,
+    pauseAudio,
+    scrollTo,
+    startAudio,
+  ]);
 
   // session readout
   useEffect(() => {
@@ -433,7 +521,10 @@ export default function Home() {
         <button
           type="button"
           className="cmdbtn"
-          onClick={() => setCommandOpen((o) => !o)}
+          onClick={() => {
+            cancelHints(true);
+            setCommandOpen((o) => !o);
+          }}
           aria-haspopup="dialog"
           aria-expanded={commandOpen}
         >
@@ -489,10 +580,11 @@ export default function Home() {
             </span>
           ))}
         </div>
-        {/* Also the arrow-arming indicator: a single pulse means the press was
-            heard but is waiting for confirmation; a held glow means arrows are
-            live. aria-hidden because the readout already announces the mode. */}
-        <span className="modedot" data-arm={armState} aria-hidden="true" />
+
+        {/* The dot is three things at once: the selection marker the mode bar
+            scrolls against, the arrow-arming indicator, and the anchor the
+            hint blob grows out of. */}
+        <ModeDot arm={armState} run={hintRun} onFinish={finishHints} />
       </div>
     </main>
   );
