@@ -85,8 +85,14 @@ const CLICK_LEN = 0.045;
  * object; much shorter and it is a single click, much longer and it is two.
  */
 const CLICK_GAP = 0.022;
-/** Peak gain of the settle tick. Deliberately near the noise floor. */
-const TICK_GAIN = 0.1;
+/**
+ * Peak gain of the settle tick, as linear amplitude.
+ *
+ * Set by ear, not by rule: 0.1 was judged "a little bit too loud" and 70% of
+ * it exactly right. Amplitude is linear here, so 0.07 is that 70% (-3.1 dB).
+ * The tick should sit just above the noise bed -- noticed, never announced.
+ */
+const TICK_GAIN = 0.07;
 /** Centre frequency of the first (lever) transient, in Hz. Duller. */
 const CLICK_LO_HZ = 1150;
 /** Centre frequency of the second (contact) transient, in Hz. Brighter. */
