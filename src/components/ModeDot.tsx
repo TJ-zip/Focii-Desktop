@@ -59,7 +59,6 @@ export default function ModeDot({ arm, run, onFinish }: Props) {
     clearAll();
     if (run === 0) {
       setShown(false);
-      setStep(-1);
       return;
     }
 
@@ -80,7 +79,6 @@ export default function ModeDot({ arm, run, onFinish }: Props) {
     });
     timers.current.push(
       window.setTimeout(() => {
-        setStep(-1);
         finishRef.current?.();
       }, t)
     );
@@ -92,16 +90,24 @@ export default function ModeDot({ arm, run, onFinish }: Props) {
 
   return (
     <div className="dotwrap">
-      {/* Polite, so it is announced after whatever the user is doing rather
-          than interrupting it. The blob is removed from the DOM between
-          lines, which is what makes each new line a fresh announcement. */}
+      {/*
+        The blob stays mounted and collapses via CSS rather than unmounting.
+        Unmounting would make it disappear instantly on the way out, which
+        breaks the illusion that the dot and the blob are one object.
+
+        `step` is deliberately not reset when the sequence ends: clearing the
+        text would re-announce an empty region, and the collapsed blob is not
+        visible anyway.
+      */}
       <div className="dothintlive" aria-live="polite">
-        {open && <span className="dothint">{STEPS[step]}</span>}
+        <span className="dothint" data-open={open ? "true" : "false"}>
+          {step >= 0 ? STEPS[step] : ""}
+        </span>
       </div>
       <span
         className="modedot"
         data-arm={arm}
-        data-hidden={open ? "true" : undefined}
+        data-hidden={open ? "true" : "false"}
         aria-hidden="true"
       />
     </div>
