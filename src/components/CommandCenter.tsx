@@ -5,11 +5,16 @@ import { useEffect, useRef } from "react";
 /**
  * A single command row. `keys` are rendered as separate <kbd> elements so a
  * chord reads as "SHIFT + C" rather than as one opaque token.
+ *
+ * `sep` is what goes between them. It defaults to "+" (press together). Set
+ * it to "then" for a sequence: "SHIFT + C" and "LEFT then LEFT" are entirely
+ * different instructions and the panel must not render them identically.
  */
 export interface Command {
   keys: string[];
   label: string;
   detail?: string;
+  sep?: string;
 }
 
 export const COMMANDS: Command[] = [
@@ -27,9 +32,10 @@ export const COMMANDS: Command[] = [
   },
   {
     keys: ["\u2190", "\u2190"],
+    sep: "then",
     label: "Change mode",
     detail:
-      "Press twice. One arrow arms, the second moves, and further single presses keep moving while the dot glows. Scrolling or clicking the bar needs no such confirmation \u2014 you already reached for it.",
+      "Press twice. The first arrow arms and does not move; the second moves, and further single presses keep moving while the dot glows. Scrolling or clicking the bar needs no such confirmation \u2014 you already reached for it.",
   },
   {
     keys: ["Shift", "C"],
@@ -132,7 +138,9 @@ export default function CommandCenter({ open, onClose }: Props) {
               <span className="cmdkeys">
                 {c.keys.map((k, i) => (
                   <span key={`${k}-${i}`} className="cmdkeywrap">
-                    {i > 0 && <span className="cmdplus">+</span>}
+                    {i > 0 && (
+                      <span className="cmdplus">{c.sep ?? "+"}</span>
+                    )}
                     <kbd>{k}</kbd>
                   </span>
                 ))}
