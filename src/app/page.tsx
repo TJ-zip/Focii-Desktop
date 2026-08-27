@@ -3,10 +3,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Visualizer, { type VisualMode } from "../components/Visualizer";
 import CommandCenter from "../components/CommandCenter";
+import MeasurePane from "../components/MeasurePane";
 import ModeDot, { type ArmState, type HintScope } from "../components/ModeDot";
 import SessionClock, { type Split } from "../components/SessionClock";
 import { SoundscapeEngine, SETTLE_DELAY } from "../audio/engine";
 import { SECTIONS, sectionAt } from "../audio/presets";
+import {
+  isRecording,
+  saveSession,
+  setRecording as setRecordingPref,
+  MIN_RECORD_SECONDS,
+  type LiveSession,
+} from "../lib/sessions";
 
 type Mode = VisualMode;
 
@@ -86,6 +94,22 @@ const DEAD_SPACE_WINDOW = 1600;
 const DEAD_SPACE_TRIGGER = 2;
 
 /**
+ * The in-flight session.
+ *
+ * `since` is a performance.now() stamp for the span currently running, or
+ * null while paused. `acc` holds completed seconds per mode. Time is taken
+ * from performance.now() rather than the AudioContext clock because the
+ * audio clock does not exist while paused and is rebuilt on resume, whereas
+ * what is being measured is wall-clock listening.
+ */
+interface Tracker {
+  startedAt: number;
+  mode: Mode;
+  since: number | null;
+  acc: Record<string, number>;
+}
+
+/**
  * True when the key event originated in something the user is typing into.
  * Space and P must never be stolen from a text field. There are no text
  * fields today, but a global keydown handler that does not check this is a
@@ -130,8 +154,18 @@ export default function Home() {
 
   const [playing, setPlaying] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
+  const [measureOpen, setMeasureOpen] = useState(false);
   const [hasStarted, setHasStarted] = useState(true); // assume yes until localStorage says otherwise
   const [session, setSession] = useState({ name: "", elapsed: 0 });
+
+  // Measurement. The tracker is a ref because it is written from a keydown
+  // handler, a visibilitychange listener and an unmount cleanup - none of
+  // which can wait for a render. `live` is the rendered projection of it,
+  // refreshed only while the pane is actually open.
+  const tracker = useRef<Tracker | null>(null);
+  const [live, setLive] = useState<LiveSession | null>(null);
+  const [recording, setRecordingState] = useState(true);
+  const recordingRef = useRef(true);
 
   /**
    * The split timer's stage machine.
@@ -191,11 +225,85 @@ export default function Home() {
       hintsSeenRef.current = true;
       setHintScope("short");
     }
+    const rec = isRecording();
+    recordingRef.current = rec;
+    setRecordingState(rec);
   }, []);
+
+  // --- measurement --------------------------------------------------------
+
+  /** Bank the running span. Idempotent: `since` is advanced as it goes, so
+      calling this twice in a row adds nothing the second time. */
+  const flushSpan = useCallback(() => {
+    const t = tracker.current;
+    if (!t || t.since === null) return;
+    const now = performance.now();
+    const dt = (now - t.since) / 1000;
+    if (dt > 0) t.acc[t.mode] = (t.acc[t.mode] ?? 0) + dt;
+    t.since = now;
+  }, []);
+
+  const snapshot = useCallback((): LiveSession | null => {
+    const t = tracker.current;
+    if (!t) return null;
+    flushSpan();
+    const spans = Object.entries(t.acc).map(([m, seconds]) => ({
+      mode: m,
+      seconds,
+    }));
+    return {
+      startedAt: t.startedAt,
+      total: spans.reduce((n, s) => n + s.seconds, 0),
+      spans,
+    };
+  }, [flushSpan]);
+
+  /**
+   * Write the session out. Keyed on its start time, so the repeated calls
+   * from pause / tab-hide / unmount overwrite one row rather than producing
+   * four. Silently does nothing when recording is off.
+   */
+  const persist = useCallback(() => {
+    const t = tracker.current;
+    if (!t || !recordingRef.current) return;
+    const snap = snapshot();
+    if (!snap || snap.total < MIN_RECORD_SECONDS) return;
+    saveSession({
+      id: t.startedAt,
+      startedAt: t.startedAt,
+      endedAt: Date.now(),
+      total: snap.total,
+      spans: snap.spans,
+    });
+  }, [snapshot]);
+
+  const toggleRecording = useCallback((on: boolean) => {
+    recordingRef.current = on;
+    setRecordingState(on);
+    setRecordingPref(on);
+    if (on) persistRef.current();
+  }, []);
+
+  // persist() is referenced by toggleRecording, which is defined first for
+  // readability. A ref keeps the dependency graph acyclic without either
+  // callback having to be rebuilt when the other changes.
+  const persistRef = useRef(persist);
+  useEffect(() => {
+    persistRef.current = persist;
+  }, [persist]);
 
   // The engine crossfades between modes without restarting the session clock,
   // so changing mode mid-session keeps the Initiation -> Deep progression.
   useEffect(() => {
+    // Close the running span BEFORE the mode label changes, or the time
+    // spent in the old mode is credited to the new one. Runs whether or not
+    // audio is playing; while paused `since` is null and this is a no-op.
+    const t = tracker.current;
+    if (t && t.mode !== mode) {
+      flushSpan();
+      t.mode = mode;
+    }
+
     const engine = engineRef.current;
     if (!engine || !engine.running) return;
 
@@ -213,7 +321,7 @@ export default function Home() {
       from: engine.elapsed,
       modeElapsed: 0,
     });
-  }, [mode]);
+  }, [mode, flushSpan]);
 
   // Hold the "+", then let the red clock fold away. Keyed on the whole split
   // object, so an interrupting mode change replaces the timer rather than
@@ -249,6 +357,23 @@ export default function Home() {
       engineRef.current = next;
       setPlaying(true);
       setHasStarted(true);
+
+      // A resume continues the same measured session; only a tab that has
+      // never played starts a new one. This matches the audio, which resumes
+      // from the same phase and the same seed.
+      const t = tracker.current;
+      if (t) {
+        t.mode = modeRef.current;
+        t.since = performance.now();
+      } else {
+        tracker.current = {
+          startedAt: Date.now(),
+          mode: modeRef.current,
+          since: performance.now(),
+          acc: {},
+        };
+      }
+
       try {
         window.localStorage.setItem(STARTED_KEY, "1");
       } catch {
@@ -273,7 +398,43 @@ export default function Home() {
     // A pause cancels a settle in progress: the engine's pending tick dies
     // with the graph, so nothing would ever advance the split past `rolling`.
     setSplit(null);
-  }, []);
+
+    // Stop the clock on the current span and bank the session. Paused time
+    // is not listening time, so `since` goes null rather than continuing.
+    flushSpan();
+    if (tracker.current) tracker.current.since = null;
+    persist();
+  }, [flushSpan, persist]);
+
+  // Refresh the pane's numbers only while it is open. A session runs for
+  // hours; there is no reason to re-render a closed dialog once a second.
+  useEffect(() => {
+    if (!measureOpen) return;
+    const tick = () => setLive(snapshot());
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [measureOpen, snapshot]);
+
+  // Save at every point the session might not survive to be saved later.
+  // `visibilitychange` is the reliable one on mobile - `beforeunload` is not
+  // fired at all when a backgrounded tab is discarded - and `pagehide`
+  // covers desktop navigation away.
+  useEffect(() => {
+    const save = () => {
+      flushSpan();
+      persist();
+    };
+    const onVis = () => {
+      if (document.visibilityState === "hidden") save();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", save);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", save);
+    };
+  }, [flushSpan, persist]);
 
   // --- dot hints ----------------------------------------------------------
 
@@ -417,11 +578,11 @@ export default function Home() {
       const a = armRef.current;
       clearArmTimer();
 
-      const live = a.armed && now - a.at <= ARM_IDLE;
+      const live2 = a.armed && now - a.at <= ARM_IDLE;
       const completesDouble =
         !a.armed && a.dir === dir && now - a.at <= ARM_WINDOW;
 
-      if (live || completesDouble) {
+      if (live2 || completesDouble) {
         armRef.current = { armed: true, dir, at: now };
         setArmState("armed");
         armTimer.current = window.setTimeout(disarm, ARM_IDLE);
@@ -456,23 +617,35 @@ export default function Home() {
       if (isTypingTarget(e.target)) return;
 
       if (e.code === "Escape") {
-        if (commandOpen) {
+        if (commandOpen || measureOpen) {
           e.preventDefault();
           setCommandOpen(false);
+          setMeasureOpen(false);
         }
         return;
       }
 
+      // The two panel chords are handled before the modal guard below, so
+      // each one closes the other rather than stacking two dialogs.
       if (e.shiftKey && e.code === "KeyC") {
         e.preventDefault();
         cancelHints(true); // they found it; the tail has nothing left to add
+        setMeasureOpen(false);
         setCommandOpen((o) => !o);
         return;
       }
 
-      // While the dialog is up it owns the keyboard, apart from the two keys
+      if (e.shiftKey && e.code === "KeyM") {
+        e.preventDefault();
+        cancelHints(true);
+        setCommandOpen(false);
+        setMeasureOpen((o) => !o);
+        return;
+      }
+
+      // While a dialog is up it owns the keyboard, apart from the keys
       // handled above.
-      if (commandOpen) return;
+      if (commandOpen || measureOpen) return;
 
       if (e.code === "Space") {
         e.preventDefault(); // stop the page scrolling
@@ -520,6 +693,7 @@ export default function Home() {
     arrowStep,
     cancelHints,
     commandOpen,
+    measureOpen,
     noteDeadSpace,
     pauseAudio,
     scrollTo,
@@ -551,13 +725,15 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, [playing]);
 
-  // stop audio when the page unmounts
+  // stop audio when the page unmounts, and bank whatever was measured
   useEffect(() => {
     return () => {
+      flushSpan();
+      persistRef.current();
       engineRef.current?.stop();
       engineRef.current = null;
     };
-  }, []);
+  }, [flushSpan]);
 
   // center the initial mode once mounted
   useEffect(() => {
@@ -605,6 +781,7 @@ export default function Home() {
           className="cmdbtn"
           onClick={() => {
             cancelHints(true);
+            setMeasureOpen(false);
             setCommandOpen((o) => !o);
           }}
           aria-haspopup="dialog"
@@ -618,6 +795,14 @@ export default function Home() {
       </div>
 
       <CommandCenter open={commandOpen} onClose={() => setCommandOpen(false)} />
+
+      <MeasurePane
+        open={measureOpen}
+        onClose={() => setMeasureOpen(false)}
+        live={live}
+        recording={recording}
+        onToggleRecording={toggleRecording}
+      />
 
       <div className="hud">
         <p className="session">
