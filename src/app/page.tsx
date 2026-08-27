@@ -4,8 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Visualizer, { type VisualMode } from "../components/Visualizer";
 import CommandCenter from "../components/CommandCenter";
 import ModeDot, { type ArmState, type HintScope } from "../components/ModeDot";
-import { SoundscapeEngine } from "../audio/engine";
-import { sectionAt } from "../audio/presets";
+import SessionClock, { type Split } from "../components/SessionClock";
+import { SoundscapeEngine, SETTLE_DELAY } from "../audio/engine";
+import { SECTIONS, sectionAt } from "../audio/presets";
 
 type Mode = VisualMode;
 
@@ -42,6 +43,18 @@ const STARTED_KEY = "soundscape.hasStarted";
 const HINTS_KEY = "soundscape.hintsSeen";
 
 /**
+ * How long the red clock counts before the two clocks merge.
+ *
+ * Taken from the session structure rather than hardcoded: it is the same
+ * window a fresh session spends in Initiation, so a mode change is measured
+ * against the same yardstick as a beginning.
+ */
+const SETTLE_SECONDS = SECTIONS[0][1];
+
+/** How long the "+" is held before the red clock folds away, in ms. */
+const SUM_HOLD = 1700;
+
+/**
  * Arrow-key arming.
  *
  * Scrolling and clicking the mode bar are unambiguous gestures: you had to
@@ -71,16 +84,6 @@ const ARM_IDLE = 2500;
  */
 const DEAD_SPACE_WINDOW = 1600;
 const DEAD_SPACE_TRIGGER = 2;
-
-function formatClock(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  const mm = String(m).padStart(2, "0");
-  const ss = String(sec).padStart(2, "0");
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-}
 
 /**
  * True when the key event originated in something the user is typing into.
@@ -130,6 +133,24 @@ export default function Home() {
   const [hasStarted, setHasStarted] = useState(true); // assume yes until localStorage says otherwise
   const [session, setSession] = useState({ name: "", elapsed: 0 });
 
+  /**
+   * The split timer's stage machine.
+   *
+   * A mode change does not restart the session, so the clock cannot reset -
+   * but something plainly happened, so it must not sit there either. It
+   * splits in two for one settling window and then merges back:
+   *
+   *   rolling  -> the red copy spends the session number back down to 0:00,
+   *               landing exactly as the settle tick sounds
+   *   settling -> it counts up through the settling window
+   *   summing  -> "+" appears and the two clocks fold together
+   *
+   * `splitId` only ever increases, so a mode change that interrupts a split
+   * in progress cannot be finished by the previous run's timers.
+   */
+  const [split, setSplit] = useState<Split | null>(null);
+  const splitId = useRef(0);
+
   // Arrow arming. The ref carries the logic (it must be readable from inside
   // a keydown handler without re-binding the listener); the state exists only
   // so the red dot can show what the keyboard is currently willing to do.
@@ -176,8 +197,32 @@ export default function Home() {
   // so changing mode mid-session keeps the Initiation -> Deep progression.
   useEffect(() => {
     const engine = engineRef.current;
-    if (engine && engine.running) engine.setMode(mode);
+    if (!engine || !engine.running) return;
+
+    // Read the engine's mode BEFORE changing it. setMode early-returns when
+    // the mode is unchanged, which means no crossfade and no settle tick -
+    // and a split started on that non-event would wait for an onSettle that
+    // never comes, freezing the reel at 0:00 forever.
+    const prev = engine.currentMode;
+    engine.setMode(mode);
+    if (prev === mode) return;
+
+    setSplit({
+      id: ++splitId.current,
+      stage: "rolling",
+      from: engine.elapsed,
+      modeElapsed: 0,
+    });
   }, [mode]);
+
+  // Hold the "+", then let the red clock fold away. Keyed on the whole split
+  // object, so an interrupting mode change replaces the timer rather than
+  // letting a stale one clear a newer split.
+  useEffect(() => {
+    if (!split || split.stage !== "summing") return;
+    const id = window.setTimeout(() => setSplit(null), SUM_HOLD);
+    return () => window.clearTimeout(id);
+  }, [split]);
 
   const startAudio = useCallback(async () => {
     if (startingRef.current) return;
@@ -193,6 +238,12 @@ export default function Home() {
       const next = new SoundscapeEngine({
         phase: phaseRef.current,
         seed: seedRef.current,
+        // Fires at the same instant the tick sounds, so the reel landing on
+        // 0:00 and the mode audibly setting in are one event, not two.
+        onSettle: () =>
+          setSplit((s) =>
+            s ? { ...s, stage: "settling", modeElapsed: 0 } : s
+          ),
       });
       await next.start(modeRef.current);
       engineRef.current = next;
@@ -219,6 +270,9 @@ export default function Home() {
     engineRef.current = null;
     setPlaying(false);
     setSession({ name: sectionAt(at).name, elapsed: at });
+    // A pause cancels a settle in progress: the engine's pending tick dies
+    // with the graph, so nothing would ever advance the split past `rolling`.
+    setSplit(null);
   }, []);
 
   // --- dot hints ----------------------------------------------------------
@@ -472,7 +526,11 @@ export default function Home() {
     startAudio,
   ]);
 
-  // session readout
+  // session readout, and the slow half of the split timer.
+  //
+  // Both clocks are derived from the engine, i.e. from the AudioContext's own
+  // clock, rather than from counting interval fires. A dropped or throttled
+  // interval therefore costs a visual update, never accumulated drift.
   useEffect(() => {
     if (!playing) return;
     const id = window.setInterval(() => {
@@ -480,6 +538,15 @@ export default function Home() {
       if (!engine || !engine.running) return;
       const e = engine.elapsed;
       setSession({ name: sectionAt(e).name, elapsed: e });
+
+      setSplit((s) => {
+        if (!s || s.stage !== "settling") return s;
+        // modeElapsed runs from the START of the crossfade, but the red clock
+        // starts from the tick, so the delay comes back off.
+        const m = Math.max(0, engine.modeElapsed - SETTLE_DELAY);
+        if (m >= SETTLE_SECONDS) return { ...s, stage: "summing" };
+        return { ...s, modeElapsed: m };
+      });
     }, 1000);
     return () => window.clearInterval(id);
   }, [playing]);
@@ -558,13 +625,15 @@ export default function Home() {
           <span className="blurb">{active.blurb}</span>
         </p>
 
-        <p className="readout" aria-live="polite">
-          {playing
-            ? `${session.name} \u00b7 ${formatClock(session.elapsed)}`
-            : paused
-              ? `${session.name} \u00b7 ${formatClock(session.elapsed)} \u00b7 paused`
-              : "\u00a0"}
-        </p>
+        <SessionClock
+          label={session.name}
+          elapsed={session.elapsed}
+          paused={paused}
+          visible={playing || paused}
+          split={split}
+          rollMs={SETTLE_DELAY * 1000}
+          settleSeconds={SETTLE_SECONDS}
+        />
 
         {/* With the transport button gone, this is the only thing telling a
             first-time visitor how to begin. It never returns once they have. */}

@@ -2,6 +2,10 @@
   --bg: #050505;
   --red: #b1121b;
   --red-dim: #5c0a0f;
+  /* --red is tuned for a glowing 6px dot, not for type: at 0.68rem on
+     #050505 it is close to unreadable. This is the same hue lifted until it
+     is legible as small text. */
+  --red-text: #cf5058;
   --fg: #e8e4e0;
   --fg-dim: #7a7370;
 }
@@ -333,13 +337,88 @@ kbd {
   }
 }
 
+/* --- the readout, and the split clock ------------------------------------
+   A flex row rather than one string, because the red clock has to be able
+   to open and close between the label and the session number without
+   anything else moving. --rgap is declared here and inherited, so the
+   mobile override is a single value. --- */
 .readout {
+  --rgap: 0.55rem;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--rgap);
   min-height: 1.1rem;
   font-size: 0.68rem;
   letter-spacing: 0.24em;
   text-transform: uppercase;
   color: var(--fg-dim);
   opacity: 0.8;
+}
+
+/* The section name goes red for as long as the mode is settling, so the
+   colour ties the label and the red clock together as one statement. */
+.rlabel {
+  transition: color 0.6s ease;
+}
+
+.rlabel[data-hot="true"] {
+  color: var(--red-text);
+}
+
+/* Closed, this is genuinely zero-width. The negative margin cancels one of
+   its two flex gaps, so a shut split leaves no hole behind - without it the
+   label and the session number would sit permanently too far apart. */
+.rsplit {
+  display: inline-flex;
+  overflow: hidden;
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(0.55em);
+  margin-right: calc(-1 * var(--rgap));
+  color: var(--red-text);
+  transition: max-width 0.5s cubic-bezier(0.2, 0.8, 0.25, 1),
+    opacity 0.38s ease, transform 0.5s cubic-bezier(0.2, 0.8, 0.25, 1),
+    margin-right 0.5s cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+
+.rsplit[data-open="true"] {
+  /* Wide enough for h:mm:ss at this tracking; max-width animates, width
+     auto does not, and the content never reaches this bound. */
+  max-width: 8em;
+  opacity: 1;
+  transform: none;
+  margin-right: 0;
+}
+
+/* Folding in: it dims a moment before it physically leaves, so the merge
+   reads as absorption rather than as the number being deleted. */
+.rsplit[data-stage="summing"] {
+  opacity: 0.72;
+}
+
+/* Without tabular figures every tick of the reel re-measures the string and
+   the whole row twitches sideways. Non-negotiable for a running clock. */
+.rmode,
+.rsession {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.rsep {
+  transition: color 0.45s ease, transform 0.45s ease;
+}
+
+/* The separator becomes the merge glyph. It is not arithmetic - the settling
+   time is already inside the session time - it is the two clocks being shown
+   as one thing again. */
+.rsep[data-sum="true"] {
+  color: var(--red-text);
+  transform: scale(1.2);
+}
+
+.rpaused {
+  opacity: 0.85;
 }
 
 /* --- mode bar: horizontally scrollable selector.
@@ -541,6 +620,14 @@ kbd {
     font-size: 0.6rem;
     letter-spacing: 0.14em;
   }
+  /* Two clocks plus a label is a lot for a narrow screen. Tighter tracking
+     and a smaller gap keep the row on one line rather than wrapping, which
+     would make the split look like a layout bug. */
+  .readout {
+    --rgap: 0.38rem;
+    font-size: 0.63rem;
+    letter-spacing: 0.16em;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -561,6 +648,28 @@ kbd {
   .firsthint {
     animation: none;
     opacity: 0.85;
+  }
+  /* The split still HAPPENS - the second clock is information, not
+     decoration - but it appears and leaves rather than sliding. The reel
+     itself is skipped in JS and lands straight on 0:00. */
+  .rsplit,
+  .rsplit[data-open="true"] {
+    transform: none;
+    transition: opacity 0.2s ease;
+  }
+  .rsplit {
+    max-width: 0;
+  }
+  .rsplit[data-open="true"] {
+    max-width: 8em;
+  }
+  .rsep,
+  .rsep[data-sum="true"] {
+    transform: none;
+    transition: none;
+  }
+  .rlabel {
+    transition: none;
   }
   /* The arming states still have to be legible without motion, so they
      become static brightness changes rather than disappearing entirely. */
