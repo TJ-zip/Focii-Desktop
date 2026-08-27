@@ -35,6 +35,25 @@ const MODES: { id: Mode; label: string; blurb: string }[] = [
 /** Set once the user has successfully started a session on this device. */
 const STARTED_KEY = "soundscape.hasStarted";
 
+/**
+ * Arrow-key arming.
+ *
+ * Scrolling and clicking the mode bar are unambiguous gestures: you had to
+ * reach for the bar to perform them. An arrow key is not - it is one stray
+ * finger away while reading, and a stray mode change costs a 2.5 s crossfade
+ * and a settle tick. So the first arrow press does NOT move. It arms.
+ *
+ * ARM_WINDOW - the second press must land inside this to count as a
+ * deliberate double. Long enough for an unhurried double tap, short enough
+ * that two unrelated presses a second apart are not read as one intent.
+ *
+ * ARM_IDLE - once armed, single presses keep stepping. The arming decays this
+ * long after the last press, so a navigation burst stays fluid but walking
+ * away and coming back starts from safe again.
+ */
+const ARM_WINDOW = 650;
+const ARM_IDLE = 2500;
+
 function formatClock(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
   const h = Math.floor(s / 3600);
@@ -62,6 +81,8 @@ function isTypingTarget(target: EventTarget | null): boolean {
     el.isContentEditable === true
   );
 }
+
+type ArmState = "idle" | "pending" | "armed";
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>("focus");
@@ -92,6 +113,17 @@ export default function Home() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [hasStarted, setHasStarted] = useState(true); // assume yes until localStorage says otherwise
   const [session, setSession] = useState({ name: "", elapsed: 0 });
+
+  // Arrow arming. The ref carries the logic (it must be readable from inside
+  // a keydown handler without re-binding the listener); the state exists only
+  // so the red dot can show what the keyboard is currently willing to do.
+  const armRef = useRef<{ armed: boolean; dir: 0 | 1 | -1; at: number }>({
+    armed: false,
+    dir: 0,
+    at: 0,
+  });
+  const armTimer = useRef<number | null>(null);
+  const [armState, setArmState] = useState<ArmState>("idle");
 
   useEffect(() => {
     modeRef.current = mode;
@@ -218,6 +250,58 @@ export default function Home() {
     [scrollTo]
   );
 
+  const clearArmTimer = () => {
+    if (armTimer.current !== null) {
+      window.clearTimeout(armTimer.current);
+      armTimer.current = null;
+    }
+  };
+
+  const disarm = useCallback(() => {
+    clearArmTimer();
+    armRef.current = { armed: false, dir: 0, at: 0 };
+    setArmState("idle");
+  }, []);
+
+  /**
+   * The gate described at ARM_WINDOW above.
+   *
+   *   left                       -> nothing (armed-pending)
+   *   left, left                 -> one mode
+   *   left, left, left           -> two modes
+   *
+   * Once armed, direction is free: you are demonstrably navigating, so a
+   * right after a left steps immediately rather than demanding a fresh
+   * double. Only the initial pair must be the same key twice.
+   */
+  const arrowStep = useCallback(
+    (dir: 1 | -1) => {
+      const now = performance.now();
+      const a = armRef.current;
+      clearArmTimer();
+
+      const live = a.armed && now - a.at <= ARM_IDLE;
+      const completesDouble = !a.armed && a.dir === dir && now - a.at <= ARM_WINDOW;
+
+      if (live || completesDouble) {
+        armRef.current = { armed: true, dir, at: now };
+        setArmState("armed");
+        armTimer.current = window.setTimeout(disarm, ARM_IDLE);
+        stepMode(dir);
+        return;
+      }
+
+      // First press of a fresh gesture. Deliberately does not move; the dot
+      // pulses so the press is visibly acknowledged rather than swallowed.
+      armRef.current = { armed: false, dir, at: now };
+      setArmState("pending");
+      armTimer.current = window.setTimeout(disarm, ARM_WINDOW);
+    },
+    [disarm, stepMode]
+  );
+
+  useEffect(() => clearArmTimer, []);
+
   // --- the single global key handler -------------------------------------
   //
   // Bound to `window`, not to a control. That is the whole point: the app has
@@ -266,10 +350,12 @@ export default function Home() {
 
       if (e.code === "ArrowRight" || e.code === "ArrowDown") {
         e.preventDefault();
-        stepMode(1);
+        if (e.repeat) return; // holding the key must not rush the modes
+        arrowStep(1);
       } else if (e.code === "ArrowLeft" || e.code === "ArrowUp") {
         e.preventDefault();
-        stepMode(-1);
+        if (e.repeat) return;
+        arrowStep(-1);
       } else if (e.code === "Home") {
         e.preventDefault();
         scrollTo(MODES[0].id);
@@ -281,7 +367,7 @@ export default function Home() {
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commandOpen, pauseAudio, scrollTo, startAudio, stepMode]);
+  }, [arrowStep, commandOpen, pauseAudio, scrollTo, startAudio]);
 
   // session readout
   useEffect(() => {
@@ -403,7 +489,10 @@ export default function Home() {
             </span>
           ))}
         </div>
-        <span className="modedot" aria-hidden="true" />
+        {/* Also the arrow-arming indicator: a single pulse means the press was
+            heard but is waiting for confirmation; a held glow means arrows are
+            live. aria-hidden because the readout already announces the mode. */}
+        <span className="modedot" data-arm={armState} aria-hidden="true" />
       </div>
     </main>
   );
