@@ -309,6 +309,246 @@ kbd {
   }
 }
 
+/* --- measurement pane ---------------------------------------------------
+   Deliberately built on .cmdpanel: the two dialogs are the same object
+   showing different things, and giving the second one its own frame would
+   make the app look like two apps. Only the width and the contents
+   differ. --- */
+.msrpanel {
+  width: min(100%, 38rem);
+  display: flex;
+  flex-direction: column;
+}
+
+.msrempty {
+  color: var(--fg-dim);
+  font-size: 0.8rem;
+  line-height: 1.75;
+  padding: 1.4rem 0.2rem 1.8rem;
+}
+
+.msrempty kbd {
+  margin: 0 0.15rem;
+}
+
+/* The headline number. Everything below it is a breakdown of this. */
+.msrtotal {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  padding-bottom: 1.1rem;
+  border-bottom: 1px solid rgba(232, 228, 224, 0.07);
+}
+
+.msrbig {
+  color: var(--fg);
+  font-size: 1.6rem;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.msrmeta {
+  color: var(--fg-dim);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+}
+
+/* --- current session: mode share --- */
+.msrspans {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.5rem 0 0.2rem;
+}
+
+.msrspan {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr 4.5rem;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.55rem 0.2rem;
+}
+
+.msrspanname {
+  color: var(--fg);
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+/* A session is a proportion before it is a number, and a column of
+   durations does not show a proportion. */
+.msrbar {
+  display: block;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(232, 228, 224, 0.08);
+  overflow: hidden;
+}
+
+.msrbarfill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--red);
+  box-shadow: 0 0 10px rgba(177, 18, 27, 0.7);
+  transition: width 0.6s cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+
+.msrspantime {
+  text-align: right;
+  color: var(--fg-dim);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.msrnote {
+  color: var(--fg-dim);
+  font-size: 0.7rem;
+  line-height: 1.6;
+  opacity: 0.8;
+  padding: 0.4rem 0.2rem 0;
+}
+
+/* --- history --- */
+.msrlist {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  /* The panel scrolls; this keeps the footer controls reachable without a
+     long history pushing them off the bottom of the viewport. */
+  max-height: 44dvh;
+  overflow-y: auto;
+  padding: 0.3rem 0 0.2rem;
+}
+
+.msrentry {
+  display: grid;
+  grid-template-columns: 11rem 4.5rem 1fr;
+  align-items: baseline;
+  gap: 0.8rem;
+  padding: 0.62rem 0.2rem;
+  border-top: 1px solid rgba(232, 228, 224, 0.06);
+}
+
+.msrentry:first-child {
+  border-top: 0;
+}
+
+.msrwhen {
+  color: var(--fg-dim);
+  font-size: 0.74rem;
+  letter-spacing: 0.03em;
+}
+
+.msrdur {
+  color: var(--fg);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.msrmix {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.msrchip {
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  background: rgba(232, 228, 224, 0.05);
+  border: 1px solid rgba(232, 228, 224, 0.1);
+  border-radius: 999px;
+  padding: 0.16rem 0.5rem;
+  white-space: nowrap;
+}
+
+/* --- footer --- */
+.msrfoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 1.1rem;
+  border-top: 1px solid rgba(232, 228, 224, 0.07);
+}
+
+.msrfootright {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.msrbtn {
+  border: 1px solid rgba(232, 228, 224, 0.14);
+  background: none;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 0.38rem 0.85rem;
+  cursor: pointer;
+  transition: color 0.3s, border-color 0.3s, background 0.3s;
+}
+
+.msrbtn:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: rgba(232, 228, 224, 0.3);
+}
+
+.msrbtn:focus-visible {
+  outline: 1px solid var(--red);
+  outline-offset: 3px;
+}
+
+.msrbtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Armed. It says what it will do rather than asking a question, because a
+   button that asks "are you sure" teaches people to say yes. */
+.msrbtn[data-danger="true"] {
+  color: var(--fg);
+  border-color: rgba(177, 18, 27, 0.75);
+  background: rgba(177, 18, 27, 0.18);
+}
+
+.msrtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--fg-dim);
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 0.38rem 0.2rem;
+}
+
+.msrtoggle input {
+  accent-color: var(--red);
+  width: 0.85rem;
+  height: 0.85rem;
+  cursor: pointer;
+}
+
+.msrtoggle:hover {
+  color: var(--fg);
+}
+
 /* --- first-run hint ------------------------------------------------------
    Shown only until the first successful start. Breathes slowly so the eye
    finds it without it demanding attention. --- */
@@ -628,6 +868,38 @@ kbd {
     font-size: 0.63rem;
     letter-spacing: 0.16em;
   }
+  /* The three-column rows stop being rows. A 5.5rem label column next to a
+     bar next to a duration does not fit, and squeezing it makes the bars
+     too short to read as proportions. */
+  .msrspan {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "name time"
+      "bar  bar";
+    gap: 0.4rem 0.6rem;
+  }
+  .msrspanname {
+    grid-area: name;
+  }
+  .msrspantime {
+    grid-area: time;
+  }
+  .msrbar {
+    grid-area: bar;
+  }
+  .msrentry {
+    grid-template-columns: 1fr auto;
+    gap: 0.35rem 0.6rem;
+  }
+  .msrmix {
+    grid-column: 1 / -1;
+  }
+  .msrbig {
+    font-size: 1.35rem;
+  }
+  .msrfoot {
+    gap: 0.6rem;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -644,6 +916,10 @@ kbd {
   .cmdscrim,
   .cmdpanel {
     animation: none;
+  }
+  .msrbarfill,
+  .msrbtn {
+    transition: none;
   }
   .firsthint {
     animation: none;
