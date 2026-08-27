@@ -10,12 +10,17 @@ import { useDialogFocus } from "../lib/useDialogFocus";
  * `sep` is what goes between them. It defaults to "+" (press together). Set
  * it to "then" for a sequence: "SHIFT + C" and "LEFT then LEFT" are entirely
  * different instructions and the panel must not render them identically.
+ *
+ * `action` marks a row that goes somewhere rather than describing a key. Such
+ * a row is rendered as a real <button>, because a list item with a click
+ * handler is invisible to the keyboard and announced as nothing.
  */
 export interface Command {
   keys: string[];
   label: string;
   detail?: string;
   sep?: string;
+  action?: "philosophy";
 }
 
 export const COMMANDS: Command[] = [
@@ -53,19 +58,49 @@ export const COMMANDS: Command[] = [
     keys: ["Esc"],
     label: "Close",
   },
+  {
+    keys: ["\u21B5"],
+    label: "Philosophy",
+    action: "philosophy",
+    detail:
+      "Why the session is shaped the way it is, what the click after a mode change is for, and what this app deliberately refuses to do.",
+  },
 ];
 
 interface Props {
   open: boolean;
   onClose: () => void;
+  onOpenPhilosophy: () => void;
 }
 
-export default function CommandCenter({ open, onClose }: Props) {
+export default function CommandCenter({
+  open,
+  onClose,
+  onOpenPhilosophy,
+}: Props) {
   const panelRef = useRef<HTMLDivElement | null>(null);
 
   useDialogFocus(open, panelRef);
 
   if (!open) return null;
+
+  const keysOf = (c: Command) => (
+    <span className="cmdkeys">
+      {c.keys.map((k, i) => (
+        <span key={`${k}-${i}`} className="cmdkeywrap">
+          {i > 0 && <span className="cmdplus">{c.sep ?? "+"}</span>}
+          <kbd>{k}</kbd>
+        </span>
+      ))}
+    </span>
+  );
+
+  const textOf = (c: Command) => (
+    <span className="cmdtext">
+      <span className="cmdlabel">{c.label}</span>
+      {c.detail && <span className="cmddetail">{c.detail}</span>}
+    </span>
+  );
 
   return (
     <div className="cmdscrim" onMouseDown={onClose}>
@@ -93,24 +128,26 @@ export default function CommandCenter({ open, onClose }: Props) {
         </div>
 
         <ul className="cmdlist">
-          {COMMANDS.map((c) => (
-            <li key={c.label} className="cmdrow">
-              <span className="cmdkeys">
-                {c.keys.map((k, i) => (
-                  <span key={`${k}-${i}`} className="cmdkeywrap">
-                    {i > 0 && (
-                      <span className="cmdplus">{c.sep ?? "+"}</span>
-                    )}
-                    <kbd>{k}</kbd>
-                  </span>
-                ))}
-              </span>
-              <span className="cmdtext">
-                <span className="cmdlabel">{c.label}</span>
-                {c.detail && <span className="cmddetail">{c.detail}</span>}
-              </span>
-            </li>
-          ))}
+          {COMMANDS.map((c) =>
+            c.action === "philosophy" ? (
+              <li key={c.label} className="cmdrow cmdrowgo">
+                <button
+                  type="button"
+                  className="cmdgo"
+                  onClick={onOpenPhilosophy}
+                  aria-haspopup="dialog"
+                >
+                  {keysOf(c)}
+                  {textOf(c)}
+                </button>
+              </li>
+            ) : (
+              <li key={c.label} className="cmdrow">
+                {keysOf(c)}
+                {textOf(c)}
+              </li>
+            )
+          )}
         </ul>
       </div>
     </div>
