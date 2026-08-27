@@ -7,6 +7,8 @@ Personal Endel-inspired generative soundscape app. Four modes: Focus, Relax, Sle
 - **Next.js 16.3.0 (App Router) + TypeScript** app at repo root, deployable on Vercel (framework preset: Next.js, defaults).
 - **Real-time generative audio engine** (`src/audio/engine.ts`, `src/audio/presets.ts`) — merged in PR #9. Pure Web Audio synthesis: nothing is streamed, downloaded or stored, and a session never repeats. Lookahead scheduler (250 ms tick, 1.5 s horizon) against `ctx.currentTime`; a fresh oscillator per beat so every beat is phase-identical; all envelopes are `setValueCurveAtTime` curves (gaussian for pulses, raised-cosine for pads) so there is no instantaneous gain step anywhere. Per layer: sub drone at `root/2` plus a panned 1.5× harmonic (directional bass, fundamental stays centred), per-beat pulse, exponentially-spaced pads, looped decorrelated noise bed. Master through a `DynamicsCompressor` (threshold −24, ratio 3, attack 0.25 s, release 1.2 s) approximating the offline `dynFlatten` stage.
 - **Layer gain staging (do not collapse these two nodes).** Each layer has `bus` (carries the swell modulation) and `out` (carries the fade). They must stay separate: connecting a modulation source to an AudioParam *sums* with that param's scheduled value, so routing the swell into the fade param meant a fading layer settled at ±0.1 instead of 0 and disposal truncated a live waveform. That was the audible click on mode change.
+- **Settle tick** (`scheduleSettleTick`, merged in PR #10). A deliberate, non-pitched confirmation sounded `TICK_DELAY` = 4.0 s after a mode change — 1.5 s *after* the 2.5 s crossfade has completed, so it reads as "the mode has set", not as a switching artefact. Two bandpassed noise bursts 22 ms apart (1150 Hz Q 0.9 at 55 % = the lever, 2500 Hz Q 1.1 at 100 % = the contact) through a percussive `clickCurve()` envelope: 2.7 ms raised-cosine rise, `exp(-5.5j)` decay. Level `TICK_GAIN` = 0.07. Design constraints, learned the hard way: the source must be **noise, not a tone** (a short sine is a beep); there must be **two** bursts inside the 18–28 ms fusion window (the ear fuses them into one *textured* event — that texture is the whole difference between "mechanism" and "blip"); and the envelope must be **asymmetric** (nothing struck fades *in*). `TICK_DELAY` is deliberately **decoupled** from `MODE_FADE` — they were one constant, and lengthening the tick delay would otherwise have stretched a crossfade that already sounds right. The tick connects straight to `master`, so it survives layer disposal at 2.75 s. `onSettle?: (mode) => void` fires at the same instant via a mirrored timer; it is the hook PR D uses to land the mode clock's roll-down on the tick.
+- **Keyboard-first control (PR B).** No transport button exists. A single global `window` keydown handler in `src/app/page.tsx` owns Space (begin), P (pause), ←/→/Home/End (mode), Shift+C (command centre) and Escape. It reads **`e.code`, never `e.key`** — `code` is the physical key, so P survives Dvorak/AZERTY and Space is shift-independent. It bails on `ctrlKey/metaKey/altKey` and on typing targets (`isTypingTarget()`), because a global Space handler without that guard is a latent bug the moment any text field appears. Space is **"begin", not "toggle"**: pressing it while running does nothing, deliberately — that dead press is what PR C's hint sequence listens for.
 - **Visualizer: zero-dependency Canvas 2D engine** (`src/components/Visualizer.tsx`) replicating the Endel Focus aesthetic: near-black field, faint blueprint grid, breathing glyphs (plus-crosses, hollow squares, tick pairs, flare streaks, dust points) spawning center-biased on grid intersections, occasional roaming grid frame, vignette. Mode-aware palette/tempo. Decision: Canvas 2D instead of Three.js/R3F — the reference visual is flat 2D; canvas gives identical look, no new deps, better mobile perf. **Not currently synced to the audio clock** — it runs its own `requestAnimationFrame` timeline with no knowledge of BPM.
 - **Mode selector: horizontally scrollable snap bar** (replaced the 4 circular buttons). Scroll/swipe/wheel/click/keyboard; the label nearest centre becomes active. Circular red dot marks the selection point. Item centres measured via `getBoundingClientRect` relative to the track — NOT `offsetLeft`, which was measured against a positioned ancestor and skewed selection one item left. Wheel steps one mode per gesture (non-passive listener, accumulation threshold 24, cooldown 280 ms). `prefers-reduced-motion` honoured.
 - Offline audio generators: `generator/gen_soundscapes.py` (v1, all modes) and `generator/gen_focus_v2_trained.py` (**Focus v2, trained**, seed 207).
@@ -18,6 +20,7 @@ Next.js 16.3.0, React 19, TypeScript 5.6, plain CSS + Canvas 2D + Web Audio (no 
 
 ## Working features
 - **Real-time generative audio engine — browser playback confirmed by the author (2026-08-27).** Verified in Firefox on the preview deployment: session clock advances; the Initiation → Transition boundary fires at 180 s; the clock survives a mode change; Pump's beat rate is audibly ~2× Focus's; stable for 10+ minutes with no degradation; no console errors originating from application code.
+- **Settle tick — character author-approved (2026-08-27):** "it reads as a mechanism now." Level then reduced to 70 % of the approved take (`TICK_GAIN` 0.1 → 0.07) at the author's request; **0.07 itself has not yet been heard.**
 - Endel-style generative visualizer — **user verdict: "FANTABULOUS"** (PR #5 merged). Per-mode tuning v2 (PR #6 merged): focus faster (7.5 s breath, denser spawns), sleep slower (30 s breath, sparse long-lived glyphs — user loved the dimming), pump with brighter grid lines (alpha 0.13) + brightness 1.25. Reduced-motion static fallback, DPR-aware, resize-safe.
 - Page scrolls again on short viewports: only the canvas is `position: fixed`; wordmark and HUD sit in normal flow (PR #6).
 - Scrollable mode bar (no buttons, no squares/squircles): scroll-snap, centre-select aligned to the red dot, mouse-wheel mode stepping, gradient edge fades, hidden scrollbar, keyboard accessible.
@@ -26,8 +29,8 @@ Next.js 16.3.0, React 19, TypeScript 5.6, plain CSS + Canvas 2D + Web Audio (no 
 
 ## Feedback captured
 - **Generative engine playback: "FANTABULOUS", "I can't stop listening."** Ran 10+ minutes without problems.
-- Click on mode change: the user *likes* it and reads it as "the mode has shifted and is now set in stone", but wants it **delayed** rather than simultaneous with the switch. Diagnosed as a truncation artefact, so it is being removed as a bug and re-added deliberately at the end of the crossfade.
-- Wants the play/pause button removed entirely in favour of keyboard control and a Command centre.
+- Click on mode change: the user *liked* it and read it as "the mode has shifted and is now set in stone", but wanted it **delayed**. Diagnosed as a truncation artefact → removed as a bug, re-added deliberately as the settle tick (PR #10). First redesign sounded like a "Blip"; second, as filtered noise at 4.0 s, was approved.
+- Wants the play/pause button removed entirely in favour of keyboard control and a Command centre → PR B.
 - Visualizer v1: FANTABULOUS. Requested faster focus, slower sleep, brighter pump lines — done in PR #6. Sleep light-dimming explicitly praised. Now wants Focus and Pump faster still, **and agreed to beat-syncing the visualizer to the audio.**
 - Sleep audio v1.1: outstanding — do not change.
 - Relax audio v1.1: failed — user couldn't relax. Await reference tracks.
@@ -40,12 +43,12 @@ UI programme, agreed 2026-08-27. Small independently-revertable PRs, in order:
 
 | PR | Contents | Status |
 |---|---|---|
-| A | Crossfade residual fix + deliberate settle tick | **in review** |
-| B | Remove play button; global key bindings; Command button + centre (Shift+C) | next |
-| C | Hint state machine emanating from the red dot | queued |
+| A | Crossfade residual fix + deliberate settle tick | **merged** (#10, `0f4cc8c`) |
+| B | Remove play button; global key bindings; Command button + centre (Shift+C) | **in review** (#11) |
+| C | Hint state machine emanating from the red dot | next |
 | D | Two-clock model: session clock + red mode clock rolling to 0:00, mode-arc re-ramp | queued |
 | E | Session measurement pane (Shift+M) + History, `localStorage`, CSV export | queued |
-| F | Philosophy page (classical conditioning framing) | last |
+| F | Philosophy page (classical conditioning framing); also removes the per-mode blurbs | last |
 | G | Visualizer speed + beat-sync to the engine | queued |
 
 ## Pending tasks
@@ -54,10 +57,12 @@ UI programme, agreed 2026-08-27. Small independently-revertable PRs, in order:
 3. PWA: manifest, service worker, Cache Storage offline audio.
 4. Object-storage setup + `audio-manifest.json` (storage-agnostic) — optional, for locked masters only.
 5. Long-form renders per mode (3/12/75-min) via chunked synthesis.
+6. Bind `Shift+M` and add its command-centre row **in PR E**, and the Philosophy row **in PR F**. Deliberately not listed earlier: a command centre that advertises dead keys is worse than a short one.
 
 ## Known issues
 - `generator/engine_ref.py` missing — see pending task 2.
-- **Spacebar starts playback but cannot stop it.** `disabled={starting}` on the transport button blurs the focused element when React applies the attribute, so focus never returns to the button. Dissolves by construction in PR B, which binds keys on `window` instead.
+- ~~Spacebar starts playback but cannot stop it.~~ **Resolved in PR B.** Root cause: `disabled={starting}` on the transport button blurred the focused element when React applied the attribute, so focus fell to `<body>` and never returned. The button no longer exists and keys are bound on `window`.
+- **Pause is a structural resume, not a true pause.** `pauseAudio()` stores `engine.elapsed` and `startAudio()` passes it back as the engine's `phase`. The audio graph is torn down and rebuilt, so resuming costs the 1.2 s `EDGE_FADE` out/in and yields different pads. What is preserved is session position and the generative sequence (one `seedRef` per tab), not the exact sound.
 - The `presets.ts` comment describing the Deep sine as a "~110 min ultradian" cycle is wrong; it spans the 4500 s (75 min) block.
 - Focus sits at `dyn_ratio` 1.43 against Endel's measured 1.21. The only lever that closes the gap is cutting pulse gain, which would regress the "too ethereal" v1 complaint. **Deliberate deviation, documented rather than matched.**
 - Authoring sandbox: no ffmpeg/FLAC encoder, no pip installs, no network egress; binaries can't be pushed to GitHub. WAV used for delivery; FLAC mastering deferred. All build/lint/type claims must come from a GitHub Actions run.
@@ -66,6 +71,7 @@ UI programme, agreed 2026-08-27. Small independently-revertable PRs, in order:
 
 ## Required environment variables
 - None. The app makes no network calls at runtime and needs no configuration to build or deploy.
+- `localStorage` keys in use: `soundscape.hasStarted` (PR B — suppresses the first-run "press space" hint after the first successful start).
 - Session history (PR E) will use `localStorage`, deliberately **not** a hosted database — a hosted dependency would contradict the lifelong/Vercel-independent goal for a feature that only stores "pump, 41 minutes". CSV export is a client-side `Blob` download, so it works on Vercel, on localhost and offline.
 - Future object storage (names only, never values): `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `NEXT_PUBLIC_AUDIO_BASE_URL`.
 
@@ -78,10 +84,12 @@ Vercel: connected to repo (preset Next.js, defaults); preview deployments active
 - **3→12→75 session structure applies to all modes** (Initiation plays once per session; 12 and 75 alternate forever).
 - **`quantizeRoot()` is load-bearing.** The sub drone must complete an *even* number of cycles per beat — even, so the 1.5× harmonic also lands whole — otherwise its phase drifts against the beat grid, reinforcing some beats and cancelling others. This measurably shifted Pump's tempo by −3.32%. Do not "simplify" the root to a round number.
 - One purpose per AudioParam — see the layer gain staging note above.
+- `TICK_DELAY` and `MODE_FADE` are separate constants on purpose. Do not re-merge them.
+- Keyboard handling uses `e.code` (physical key), never `e.key`, and always guards typing targets.
 - Vercel-independent: PWA, offline cache, no Vercel-only APIs in app code; object storage is distribution only.
 - UI chrome: black/red, circles only — squares/squircles banned. Visualizer glyphs follow the Endel reference (grid, squares as *content*, not UI). Mode selector is a scrollable bar, not buttons; selection point = red centre dot.
 - Visualizer: Canvas 2D, zero deps (Three.js deferred).
 - Session-recording is local-only and opt-out; it records session duration and per-mode duration, nothing else.
 
 ## Last completed change
-PR #9 merged into `main` as `afe7e77` — real-time generative audio engine, author-verified in the browser. PR A (`fix/crossfade-residual-and-settle-tick`) opened immediately after to fix the crossfade residual and re-add the settle tick deliberately.
+PR #10 merged into `main` as `0f4cc8c` — crossfade residual fixed and the settle tick added at 4.0 s / gain 0.07. PR #11 (`feature/command-center-keybindings`) is open: the transport button is gone, keys are bound globally, and a Command centre opens on Shift+C.
