@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Visualizer, { type VisualMode } from "../components/Visualizer";
 import CommandCenter from "../components/CommandCenter";
-import ModeDot, { type ArmState } from "../components/ModeDot";
+import ModeDot, { type ArmState, type HintScope } from "../components/ModeDot";
 import { SoundscapeEngine } from "../audio/engine";
 import { sectionAt } from "../audio/presets";
 
@@ -35,7 +35,10 @@ const MODES: { id: Mode; label: string; blurb: string }[] = [
 
 /** Set once the user has successfully started a session on this device. */
 const STARTED_KEY = "soundscape.hasStarted";
-/** Set once the dot hint sequence has run all the way through, once. */
+/**
+ * Set once the onboarding tail of the hint sequence - lines two and three -
+ * has been seen or acted on. Line one is never gated by this.
+ */
 const HINTS_KEY = "soundscape.hintsSeen";
 
 /**
@@ -62,6 +65,9 @@ const ARM_IDLE = 2500;
  * deliberately inert. That inertness is a signal: someone pressing it twice
  * in quick succession is asking a question. Two dead presses inside this
  * window is the threshold at which the dot answers.
+ *
+ * It answers EVERY time, for the life of the app. A question asked again
+ * deserves answering again; only the unprompted follow-up lines retire.
  */
 const DEAD_SPACE_WINDOW = 1600;
 const DEAD_SPACE_TRIGGER = 2;
@@ -138,6 +144,7 @@ export default function Home() {
   // Dot hint sequence. Same split as the arming state: refs for anything the
   // key handler reads, state only for what renders.
   const [hintRun, setHintRun] = useState(0);
+  const [hintScope, setHintScope] = useState<HintScope>("full");
   const hintRunRef = useRef(0);
   const hintsSeenRef = useRef(false);
   const deadSpace = useRef({ n: 0, at: 0 });
@@ -155,10 +162,13 @@ export default function Home() {
   useEffect(() => {
     try {
       setHasStarted(window.localStorage.getItem(STARTED_KEY) === "1");
-      hintsSeenRef.current = window.localStorage.getItem(HINTS_KEY) === "1";
+      const seen = window.localStorage.getItem(HINTS_KEY) === "1";
+      hintsSeenRef.current = seen;
+      setHintScope(seen ? "short" : "full");
     } catch {
       setHasStarted(true); // private mode / storage blocked: just stay quiet
       hintsSeenRef.current = true;
+      setHintScope("short");
     }
   }, []);
 
@@ -213,39 +223,44 @@ export default function Home() {
 
   // --- dot hints ----------------------------------------------------------
 
-  const markHintsSeen = useCallback(() => {
+  /**
+   * Retire the onboarding tail. Line one is unaffected and keeps answering
+   * dead space presses forever.
+   */
+  const retireTail = useCallback(() => {
     hintsSeenRef.current = true;
+    setHintScope("short");
     try {
       window.localStorage.setItem(HINTS_KEY, "1");
     } catch {
-      // storage unavailable; the sequence may offer itself again next visit
+      // storage unavailable; the tail may offer itself again next visit
     }
   }, []);
 
   /**
    * Stop the sequence. `learned` is true when the user did the thing the
    * hints were about to teach - pausing, or opening the command centre. In
-   * that case there is nothing left to say and the hints retire permanently.
-   * An arrow press only cancels: the user is busy, not taught.
+   * that case the tail has nothing left to say. An arrow press only cancels:
+   * the user is busy, not taught.
    */
   const cancelHints = useCallback(
     (learned: boolean) => {
+      if (learned) retireTail(); // true even if no sequence is running
       if (hintRunRef.current === 0) return;
       setHintRun(0);
       deadSpace.current = { n: 0, at: 0 };
-      if (learned) markHintsSeen();
     },
-    [markHintsSeen]
+    [retireTail]
   );
 
   const finishHints = useCallback(() => {
     setHintRun(0);
-    markHintsSeen();
-  }, [markHintsSeen]);
+    retireTail();
+  }, [retireTail]);
 
   /** A space press that did nothing because the session was already running. */
   const noteDeadSpace = useCallback(() => {
-    if (hintsSeenRef.current || hintRunRef.current > 0) return;
+    if (hintRunRef.current > 0) return; // already answering
     const now = performance.now();
     const d = deadSpace.current;
     d.n = now - d.at <= DEAD_SPACE_WINDOW ? d.n + 1 : 1;
@@ -396,7 +411,7 @@ export default function Home() {
 
       if (e.shiftKey && e.code === "KeyC") {
         e.preventDefault();
-        cancelHints(true); // they found it; the hints have nothing left to add
+        cancelHints(true); // they found it; the tail has nothing left to add
         setCommandOpen((o) => !o);
         return;
       }
@@ -584,7 +599,12 @@ export default function Home() {
         {/* The dot is three things at once: the selection marker the mode bar
             scrolls against, the arrow-arming indicator, and the anchor the
             hint blob grows out of. */}
-        <ModeDot arm={armState} run={hintRun} onFinish={finishHints} />
+        <ModeDot
+          arm={armState}
+          run={hintRun}
+          scope={hintScope}
+          onFinish={finishHints}
+        />
       </div>
     </main>
   );
