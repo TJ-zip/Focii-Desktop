@@ -16,17 +16,20 @@ export const COMMANDS: Command[] = [
   {
     keys: ["Space"],
     label: "Begin",
-    detail: "Starts the session. Audio can only begin from a key press or click — browsers require it.",
+    detail:
+      "Starts the session. Audio can only begin from a key press or click \u2014 browsers require it.",
   },
   {
     keys: ["P"],
     label: "Pause",
-    detail: "Fades out and holds your place. Space resumes from the same point in the session.",
+    detail:
+      "Fades out and holds your place. Space resumes from the same point in the session.",
   },
   {
-    keys: ["\u2190", "\u2192"],
+    keys: ["\u2190", "\u2190"],
     label: "Change mode",
-    detail: "Crossfades without restarting the session clock. Scrolling the mode bar does the same.",
+    detail:
+      "Press twice. One arrow arms, the second moves, and further single presses keep moving while the dot glows. Scrolling or clicking the bar needs no such confirmation \u2014 you already reached for it.",
   },
   {
     keys: ["Shift", "C"],
@@ -128,7 +131,7 @@ export default function CommandCenter({ open, onClose }: Props) {
             <li key={c.label} className="cmdrow">
               <span className="cmdkeys">
                 {c.keys.map((k, i) => (
-                  <span key={k} className="cmdkeywrap">
+                  <span key={`${k}-${i}`} className="cmdkeywrap">
                     {i > 0 && <span className="cmdplus">+</span>}
                     <kbd>{k}</kbd>
                   </span>
