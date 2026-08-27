@@ -244,10 +244,13 @@ main {
   gap: 0.3rem;
 }
 
+/* "+" for a chord, "then" for a sequence. Lower case and dim so the kbd
+   caps stay the thing the eye lands on. */
 .cmdplus {
   color: var(--fg-dim);
   font-size: 0.62rem;
   opacity: 0.7;
+  letter-spacing: 0.04em;
 }
 
 kbd {
@@ -403,13 +406,43 @@ kbd {
   text-shadow: 0 0 18px rgba(177, 18, 27, 0.9);
 }
 
-/* circular center marker under the bar */
+/* Circular center marker under the bar. It doubles as the arrow-arming
+   indicator: the first arrow press does not change the mode, so something
+   has to acknowledge it or the key feels broken. Sized in a wrapper-free
+   way -- transform:scale on a 6px dot is cheap and never reflows the HUD. */
 .modedot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--red);
   box-shadow: 0 0 12px rgba(177, 18, 27, 0.8);
+  transition: transform 0.32s ease, box-shadow 0.4s ease;
+}
+
+/* first press heard, waiting for the confirming second one */
+.modedot[data-arm="pending"] {
+  animation: dotarm 0.62s cubic-bezier(0.22, 0.9, 0.3, 1) 1;
+}
+
+/* arrows are live; further single presses will step */
+.modedot[data-arm="armed"] {
+  transform: scale(1.45);
+  box-shadow: 0 0 16px rgba(177, 18, 27, 1),
+    0 0 0 5px rgba(177, 18, 27, 0.12);
+}
+
+@keyframes dotarm {
+  0% {
+    transform: scale(1);
+  }
+  38% {
+    transform: scale(1.85);
+    box-shadow: 0 0 20px rgba(177, 18, 27, 1),
+      0 0 0 7px rgba(177, 18, 27, 0.16);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 /* Small screens: tighten the spacing between labels so more than one
@@ -447,6 +480,20 @@ kbd {
   .firsthint {
     animation: none;
     opacity: 0.85;
+  }
+  /* The arming states still have to be legible without motion, so they
+     become static brightness changes rather than disappearing entirely. */
+  .modedot {
+    transition: none;
+  }
+  .modedot[data-arm="pending"] {
+    animation: none;
+    box-shadow: 0 0 16px rgba(177, 18, 27, 1);
+  }
+  .modedot[data-arm="armed"] {
+    transform: none;
+    box-shadow: 0 0 16px rgba(177, 18, 27, 1),
+      0 0 0 4px rgba(177, 18, 27, 0.18);
   }
 }
 
