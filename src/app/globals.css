@@ -235,6 +235,42 @@ main {
   border-top: 0;
 }
 
+/* The one row that goes somewhere. The <li> gives up its own padding and
+   grid to the button inside it, so the row looks identical to the others
+   until you point at it - a destination should not be shouting from a list
+   of key bindings. */
+.cmdrowgo {
+  display: block;
+  padding: 0;
+}
+
+.cmdgo {
+  display: grid;
+  grid-template-columns: 8.5rem 1fr;
+  gap: 1rem;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  padding: 0.7rem 0.2rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.cmdgo:hover,
+.cmdgo:focus-visible {
+  background: rgba(177, 18, 27, 0.1);
+}
+
+.cmdgo:focus-visible {
+  outline: 1px solid var(--red);
+  outline-offset: 1px;
+}
+
 .cmdkeys {
   display: flex;
   align-items: center;
@@ -307,6 +343,101 @@ kbd {
     opacity: 1;
     transform: none;
   }
+}
+
+/* --- philosophy ---------------------------------------------------------
+   The only long-form reading in the app, and therefore the only place that
+   breaks the house style. Everything else is uppercase, tracked-out sans:
+   correct for a four-word label, unreadable for nine paragraphs. This gets
+   a serif, a real measure and a 1.9 line-height, because it is meant to be
+   read once, slowly, and then left alone. --- */
+.phipanel {
+  width: min(100%, 46rem);
+  max-height: min(86dvh, 54rem);
+  padding: 1.6rem 2rem 2rem;
+}
+
+.phibody {
+  font-family: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+  color: var(--fg-dim);
+}
+
+/* The thesis, before any explanation of it. */
+.philede {
+  color: var(--fg);
+  font-size: 1.22rem;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid rgba(177, 18, 27, 0.28);
+}
+
+.phisection {
+  padding-top: 1.7rem;
+}
+
+.phisection h3 {
+  color: var(--fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  margin-bottom: 0.85rem;
+}
+
+.phisection p {
+  font-size: 0.95rem;
+  line-height: 1.9;
+}
+
+.phisection p + p {
+  margin-top: 0.85rem;
+}
+
+.phisection em {
+  color: var(--fg);
+  font-style: italic;
+}
+
+.philist {
+  list-style: none;
+  margin-top: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.philist li {
+  font-size: 0.95rem;
+  line-height: 1.85;
+  padding-left: 1rem;
+  border-left: 1px solid rgba(177, 18, 27, 0.35);
+}
+
+.philist strong {
+  display: block;
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* The merge glyph, quoted in prose. Monospace and red so the sentence and
+   the clock are visibly talking about the same mark. */
+.phiglyph {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--red-text);
+  padding: 0 0.1em;
+}
+
+.phiclose {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid rgba(177, 18, 27, 0.28);
+  color: var(--fg);
+  font-size: 1.02rem;
+  line-height: 1.8;
+  font-style: italic;
 }
 
 /* --- measurement pane ---------------------------------------------------
@@ -852,7 +983,8 @@ kbd {
     font-size: 0.72rem;
     letter-spacing: 0.18em;
   }
-  .cmdrow {
+  .cmdrow,
+  .cmdgo {
     grid-template-columns: 1fr;
     gap: 0.4rem;
   }
@@ -900,6 +1032,18 @@ kbd {
   .msrfoot {
     gap: 0.6rem;
   }
+  /* Prose does not need less line-height on a phone - it needs the same
+     rhythm at a size that fits the measure. Only the padding gives way. */
+  .phipanel {
+    padding: 1.3rem 1.15rem 1.6rem;
+  }
+  .philede {
+    font-size: 1.08rem;
+  }
+  .phisection p,
+  .philist li {
+    font-size: 0.9rem;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -916,6 +1060,9 @@ kbd {
   .cmdscrim,
   .cmdpanel {
     animation: none;
+  }
+  .cmdgo {
+    transition: none;
   }
   .msrbarfill,
   .msrbtn {
@@ -983,7 +1130,11 @@ kbd {
   }
 }
 
-/* --- session readout --- */
+/* --- session readout ----------------------------------------------------
+   The mode name and nothing else. It used to carry a blurb beneath it
+   describing the mechanism; that explanation moved to Philosophy, where it
+   can be read deliberately instead of sitting in the corner of the eye of
+   somebody trying to work. --- */
 .session {
   text-align: center;
   color: var(--fg-dim);
@@ -1001,8 +1152,4 @@ kbd {
   letter-spacing: 0.2em;
   text-transform: uppercase;
   margin-bottom: 0.15rem;
-}
-
-.session .blurb {
-  opacity: 0.85;
 }
