@@ -6,8 +6,15 @@ import CommandCenter from "../components/CommandCenter";
 import MeasurePane from "../components/MeasurePane";
 import Philosophy from "../components/Philosophy";
 import ModeDot, { type ArmState, type HintScope } from "../components/ModeDot";
-import SessionClock, { type Split } from "../components/SessionClock";
-import { SoundscapeEngine, SETTLE_DELAY } from "../audio/engine";
+import SessionClock, {
+  easeInOutCubic,
+  type Split,
+} from "../components/SessionClock";
+import {
+  SoundscapeEngine,
+  SETTLE_DELAY,
+  resumeSettleDelay,
+} from "../audio/engine";
 import { SECTIONS, sectionAt } from "../audio/presets";
 import {
   isRecording,
@@ -185,9 +192,19 @@ export default function Home() {
    *
    * `splitId` only ever increases, so a mode change that interrupts a split
    * in progress cannot be finished by the previous run's timers.
+   *
+   * Both timed stages are suspendable. A pause nulls the relevant wall-clock
+   * stamp; a resume restores it. Nothing about a split is derived from the
+   * audio clock, because the audio clock does not survive a pause - the
+   * engine is destroyed and rebuilt, and its modeElapsed restarts at zero.
    */
   const [split, setSplit] = useState<Split | null>(null);
   const splitId = useRef(0);
+  /**
+   * Mirror of `split` for the benefit of startAudio, which must read it
+   * inside a user-gesture handler and therefore cannot depend on it.
+   */
+  const splitRef = useRef<Split | null>(null);
 
   // Arrow arming. The ref carries the logic (it must be readable from inside
   // a keydown handler without re-binding the listener); the state exists only
@@ -215,6 +232,10 @@ export default function Home() {
   useEffect(() => {
     hintRunRef.current = hintRun;
   }, [hintRun]);
+
+  useEffect(() => {
+    splitRef.current = split;
+  }, [split]);
 
   // Read on the client only: touching localStorage during render would drive
   // the server and client markup apart and produce a hydration mismatch.
@@ -323,7 +344,10 @@ export default function Home() {
       id: ++splitId.current,
       stage: "rolling",
       from: engine.elapsed,
+      rollMs: SETTLE_DELAY * 1000,
+      rollStart: performance.now(),
       modeElapsed: 0,
+      settleStart: null,
     });
   }, [mode, flushSpan]);
 
@@ -345,22 +369,59 @@ export default function Home() {
       if (seedRef.current === null) {
         seedRef.current = Math.floor(Math.random() * 1e9);
       }
+
+      // A settle that a pause froze partway through. The engine that had the
+      // tick scheduled is gone, so the new one has to be told to finish it,
+      // and the reel has to be restarted over the same remainder so that the
+      // two still land together.
+      const pending = splitRef.current;
+      const resumeRoll =
+        pending && pending.stage === "rolling" && pending.rollStart === null
+          ? resumeSettleDelay(pending.rollMs / 1000)
+          : null;
+
       // Constructed here, inside the key/click handler: browsers only allow an
       // AudioContext to start from a user gesture.
       const next = new SoundscapeEngine({
         phase: phaseRef.current,
         seed: seedRef.current,
+        settleIn: resumeRoll ?? undefined,
         // Fires at the same instant the tick sounds, so the reel landing on
         // 0:00 and the mode audibly setting in are one event, not two.
         onSettle: () =>
           setSplit((s) =>
-            s ? { ...s, stage: "settling", modeElapsed: 0 } : s
+            s
+              ? {
+                  ...s,
+                  stage: "settling",
+                  modeElapsed: 0,
+                  settleStart: performance.now(),
+                }
+              : s
           ),
       });
       await next.start(modeRef.current);
       engineRef.current = next;
       setPlaying(true);
       setHasStarted(true);
+
+      // Restart whichever half of the split was suspended. Stamped now rather
+      // than at the pause, so the time spent paused is time the settle simply
+      // did not spend - which is the whole point of freezing it.
+      if (resumeRoll !== null) {
+        const at = performance.now();
+        setSplit((s) =>
+          s && s.stage === "rolling" && s.rollStart === null
+            ? { ...s, rollMs: resumeRoll * 1000, rollStart: at }
+            : s
+        );
+      } else {
+        setSplit((s) =>
+          s && s.stage === "settling" && s.settleStart === null
+            ? { ...s, settleStart: performance.now() - s.modeElapsed * 1000 }
+            : s
+        );
+      }
 
       // A resume continues the same measured session; only a tab that has
       // never played starts a new one. This matches the audio, which resumes
@@ -399,9 +460,38 @@ export default function Home() {
     engineRef.current = null;
     setPlaying(false);
     setSession({ name: sectionAt(at).name, elapsed: at });
-    // A pause cancels a settle in progress: the engine's pending tick dies
-    // with the graph, so nothing would ever advance the split past `rolling`.
-    setSplit(null);
+
+    // A pause SUSPENDS a settle; it does not cancel one. The mode change
+    // already happened and will still be in force on resume, so throwing the
+    // split away would leave the switch without an ending: no landing, no
+    // flip, no settling window. Instead both timed stages freeze in place and
+    // are handed back their remainder when the session returns.
+    const now = performance.now();
+    setSplit((s) => {
+      if (!s) return s;
+      if (s.stage === "rolling" && s.rollStart !== null) {
+        // Evaluate the easing at the instant of the pause, so `from` becomes
+        // exactly the number that was on screen. Anything else and the reel
+        // visibly jumps the moment P is pressed.
+        const p =
+          s.rollMs > 0 ? Math.min(1, (now - s.rollStart) / s.rollMs) : 1;
+        return {
+          ...s,
+          from: s.from * (1 - easeInOutCubic(p)),
+          rollMs: Math.max(0, s.rollMs - (now - s.rollStart)),
+          rollStart: null,
+        };
+      }
+      if (s.stage === "settling" && s.settleStart !== null) {
+        // Bank the settling time so far. Paused time is not settling time.
+        return {
+          ...s,
+          modeElapsed: (now - s.settleStart) / 1000,
+          settleStart: null,
+        };
+      }
+      return s;
+    });
 
     // Stop the clock on the current span and bank the session. Paused time
     // is not listening time, so `since` goes null rather than continuing.
@@ -746,9 +836,12 @@ export default function Home() {
 
   // session readout, and the slow half of the split timer.
   //
-  // Both clocks are derived from the engine, i.e. from the AudioContext's own
-  // clock, rather than from counting interval fires. A dropped or throttled
-  // interval therefore costs a visual update, never accumulated drift.
+  // The session clock is read from the engine, i.e. from the AudioContext's
+  // own clock, so a dropped or throttled interval costs a visual update and
+  // never accumulated drift. The settling clock cannot use that source: it
+  // has to survive a pause, and the engine that would have been measuring it
+  // is destroyed by one. It is anchored to a performance.now() stamp that the
+  // pause moves instead.
   useEffect(() => {
     if (!playing) return;
     const id = window.setInterval(() => {
@@ -758,11 +851,11 @@ export default function Home() {
       setSession({ name: sectionAt(e).name, elapsed: e });
 
       setSplit((s) => {
-        if (!s || s.stage !== "settling") return s;
-        // modeElapsed runs from the START of the crossfade, but the red clock
-        // starts from the tick, so the delay comes back off.
-        const m = Math.max(0, engine.modeElapsed - SETTLE_DELAY);
-        if (m >= SETTLE_SECONDS) return { ...s, stage: "summing" };
+        if (!s || s.stage !== "settling" || s.settleStart === null) return s;
+        const m = (performance.now() - s.settleStart) / 1000;
+        if (m >= SETTLE_SECONDS) {
+          return { ...s, stage: "summing", modeElapsed: SETTLE_SECONDS };
+        }
         return { ...s, modeElapsed: m };
       });
     }, 1000);
@@ -861,7 +954,6 @@ export default function Home() {
           paused={paused}
           visible={playing || paused}
           split={split}
-          rollMs={SETTLE_DELAY * 1000}
           settleSeconds={SETTLE_SECONDS}
         />
 
