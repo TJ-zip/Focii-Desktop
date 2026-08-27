@@ -51,9 +51,9 @@ const RECORD_KEY = "soundscape.recording";
  * would fill the history with noise and make the real entries harder to
  * find.
  *
- * Two minutes is also just past the 3-minute initiation block's halfway
- * point, so anything saved is at least a session that was genuinely
- * beginning rather than one that was being glanced at.
+ * Two minutes also sits inside the 3-minute initiation block, so anything
+ * saved is at least a session that was genuinely beginning rather than one
+ * that was being glanced at.
  */
 export const MIN_RECORD_SECONDS = 120;
 
@@ -206,13 +206,30 @@ export function formatWhen(epochMs: number): string {
    No server is involved, which is why this works identically on Vercel, on
    localhost, and with the network unplugged. --- */
 
-/** RFC 4180 quoting. The data is currently plain, but an export that breaks
-    the first time a mode is renamed to something with a comma in it is not
-    an export. */
+const DQUOTE = String.fromCharCode(34);
+const COMMA = ",";
+const LF = String.fromCharCode(10);
+const CR = String.fromCharCode(13);
+const CRLF = CR + LF;
+
+/**
+ * Characters that force a field to be quoted, per RFC 4180. Built from code
+ * points rather than a regex literal: a character class containing CR and LF
+ * is exactly the kind of thing that gets mangled by a rewrite, and when it
+ * breaks it breaks the whole module rather than one field.
+ */
+const QUOTE_TRIGGERS = [DQUOTE, COMMA, LF, CR];
+
+/**
+ * RFC 4180 quoting. The data is currently plain, but an export that breaks
+ * the first time a mode is renamed to something with a comma in it is not
+ * an export.
+ */
 function cell(v: string | number): string {
   const s = String(v);
-  return /["
-,]/.test(s) || /\r/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  if (!QUOTE_TRIGGERS.some((c) => s.includes(c))) return s;
+  // A literal quote inside a quoted field is escaped by doubling it.
+  return DQUOTE + s.split(DQUOTE).join(DQUOTE + DQUOTE) + DQUOTE;
 }
 
 /**
@@ -231,11 +248,11 @@ export function toCSV(list: SessionRecord[]): string {
     "mode_seconds",
     "mode_hms",
     "mode_share_pct",
-  ].join(",");
+  ].join(COMMA);
 
   const rows: string[] = [];
   for (const s of list) {
-    const spans = s.spans.length > 0 ? s.spans : [{ mode: "—", seconds: 0 }];
+    const spans = s.spans.length > 0 ? s.spans : [{ mode: "-", seconds: 0 }];
     for (const span of spans) {
       rows.push(
         [
@@ -248,13 +265,13 @@ export function toCSV(list: SessionRecord[]): string {
           cell(Math.round(span.seconds)),
           cell(formatHMS(span.seconds)),
           cell(s.total > 0 ? ((span.seconds / s.total) * 100).toFixed(1) : "0"),
-        ].join(",")
+        ].join(COMMA)
       );
     }
   }
 
   // Trailing newline: POSIX tools treat a file without one as truncated.
-  return [head, ...rows].join("\r\n") + "\r\n";
+  return [head, ...rows].join(CRLF) + CRLF;
 }
 
 /** Trigger a download of the history as CSV. Returns false if there is
