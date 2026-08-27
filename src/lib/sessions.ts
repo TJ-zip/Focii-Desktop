@@ -47,10 +47,21 @@ const RECORD_KEY = "soundscape.recording";
 
 /**
  * Below this, it was not a session. Someone pressed Space and changed their
- * mind. Writing those would fill the history with noise and make the real
- * entries harder to find.
+ * mind, or opened the tab to show somebody the visualizer. Writing those
+ * would fill the history with noise and make the real entries harder to
+ * find.
+ *
+ * Two minutes is also just past the 3-minute initiation block's halfway
+ * point, so anything saved is at least a session that was genuinely
+ * beginning rather than one that was being glanced at.
  */
-export const MIN_RECORD_SECONDS = 20;
+export const MIN_RECORD_SECONDS = 120;
+
+/**
+ * The same fact for prose. "under 120 seconds" is a correct sentence and a
+ * bad one; the UI should say what a person would say.
+ */
+export const MIN_RECORD_LABEL = "two minutes";
 
 /**
  * Oldest entries are dropped past this. Chosen to be far beyond any
@@ -200,7 +211,8 @@ export function formatWhen(epochMs: number): string {
     an export. */
 function cell(v: string | number): string {
   const s = String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return /["
+,]/.test(s) || /\r/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 /**
