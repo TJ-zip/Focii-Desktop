@@ -74,6 +74,15 @@ const DISPOSE_MARGIN = 0.25;
  */
 const TICK_DELAY = 4.0;
 
+/**
+ * Public name for the same number.
+ *
+ * Exported because the UI animates a reel that must arrive at 0:00 on the
+ * tick, not near it. Two constants that have to be equal but live in
+ * different files will eventually stop being equal, so there is only one.
+ */
+export const SETTLE_DELAY = TICK_DELAY;
+
 /** Duration of each of the two switch transients, in seconds. */
 const CLICK_LEN = 0.045;
 /**
@@ -255,6 +264,23 @@ export class SoundscapeEngine {
     const layer = this.layers[this.layers.length - 1];
     if (!this.ctx || !layer) return 0;
     return this.ctx.currentTime - layer.startTime + layer.phase;
+  }
+
+  /**
+   * Age of the current mode's layer in seconds, or 0 when not running.
+   *
+   * Distinct from `elapsed`, which carries across a mode change. This resets
+   * on every switch, and is measured from the same audio clock as `elapsed`
+   * so the two can be displayed side by side without drifting apart.
+   *
+   * Note it is measured from the START of the crossfade, not from the settle
+   * tick: a caller that wants "time since this mode set in" should subtract
+   * SETTLE_DELAY and clamp at zero.
+   */
+  get modeElapsed(): number {
+    const layer = this.layers[this.layers.length - 1];
+    if (!this.ctx || !layer) return 0;
+    return this.ctx.currentTime - layer.startTime;
   }
 
   /** Must be called from a user gesture (autoplay policy). */
