@@ -8,6 +8,7 @@ import {
   formatDuration,
   formatWhen,
   loadSessions,
+  MIN_RECORD_LABEL,
   MIN_RECORD_SECONDS,
   type LiveSession,
   type SessionRecord,
@@ -155,21 +156,21 @@ export default function MeasurePane({
               </ul>
               {live.total < MIN_RECORD_SECONDS && recording && (
                 <p className="msrnote">
-                  Sessions under {MIN_RECORD_SECONDS} seconds are not saved.
+                  Sessions shorter than {MIN_RECORD_LABEL} are not saved.
                 </p>
               )}
               {!recording && (
                 <p className="msrnote">
-                  Recording is off — this is shown from memory and will not be
-                  saved.
+                  Recording is off &mdash; this is shown from memory and will
+                  not be saved.
                 </p>
               )}
             </>
           )
         ) : history.length === 0 ? (
           <p className="msrempty">
-            No sessions recorded yet. Anything longer than{" "}
-            {MIN_RECORD_SECONDS} seconds is kept here, on this device only.
+            No sessions recorded yet. Anything longer than {MIN_RECORD_LABEL} is
+            kept here, on this device only.
           </p>
         ) : (
           <>
