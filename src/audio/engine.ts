@@ -20,10 +20,13 @@
  *    alternate beats cancel -- see quantizeRoot() in presets.ts for the same
  *    problem on the drone layer, which measurably shifted pump's tempo.
  *
- * 3. NO ATTACK TRANSIENTS. Every envelope is a smooth curve applied with
- *    setValueCurveAtTime -- gaussian for pulses, raised-cosine for pads. There
- *    is no instantaneous gain step anywhere, which is what keeps the result
- *    non-distracting (the "string pluck" complaint from v1).
+ * 3. NO ATTACK TRANSIENTS -- IN THE MUSIC. Every musical envelope is a smooth
+ *    curve applied with setValueCurveAtTime: gaussian for pulses,
+ *    raised-cosine for pads. There is no instantaneous gain step anywhere,
+ *    which is what keeps the result non-distracting (the "string pluck"
+ *    complaint from v1). The settle tick is the one deliberate exception in
+ *    character -- it is meant to sound like a mechanism -- but even it rises
+ *    over 2.7ms rather than stepping, so it never actually clips.
  *
  * 4. AUTOPLAY POLICY. The AudioContext must be constructed and resumed inside
  *    a user gesture, so construction is deferred to start().
@@ -61,12 +64,33 @@ const EDGE_FADE = 1.2;
  */
 const DISPOSE_MARGIN = 0.25;
 
-/** Length of the settle tick, in seconds. */
-const TICK_LEN = 0.05;
+/**
+ * Delay from the start of a mode change to the settle tick, in seconds.
+ *
+ * Deliberately NOT tied to MODE_FADE. The crossfade wants to be short enough
+ * that the transition feels responsive; the tick wants to land after the new
+ * mode has audibly established itself. Coupling them meant lengthening one to
+ * lengthen the other. The tick now sounds 1.5s after the crossfade completes.
+ */
+const TICK_DELAY = 4.0;
+
+/** Duration of each of the two switch transients, in seconds. */
+const CLICK_LEN = 0.045;
+/**
+ * Spacing between the two transients, in seconds.
+ *
+ * This single number is what separates "a switch" from "a pop". Real toggle
+ * switches are two events: the lever passing its detent, then the contact
+ * seating. Somewhere around 18-28ms the ear fuses them into one textured
+ * object; much shorter and it is a single click, much longer and it is two.
+ */
+const CLICK_GAP = 0.022;
 /** Peak gain of the settle tick. Deliberately near the noise floor. */
-const TICK_GAIN = 0.055;
-/** Low-pass applied to the settle tick, in Hz, so it reads soft not sharp. */
-const TICK_CUT = 2600;
+const TICK_GAIN = 0.1;
+/** Centre frequency of the first (lever) transient, in Hz. Duller. */
+const CLICK_LO_HZ = 1150;
+/** Centre frequency of the second (contact) transient, in Hz. Brighter. */
+const CLICK_HI_HZ = 2500;
 
 /** Sample count used for generated envelope curves. */
 const CURVE_STEPS = 128;
@@ -99,6 +123,30 @@ function raisedCosineCurve(
       const r = steps - a;
       const j = i - a;
       c[i] = 0.5 + 0.5 * Math.cos((Math.PI * j) / Math.max(1, r - 1));
+    }
+  }
+  c[0] = 0;
+  c[steps - 1] = 0;
+  return c;
+}
+
+/**
+ * Percussive envelope: a very fast raised-cosine rise, then exponential decay.
+ *
+ * Asymmetric on purpose. The gaussian used everywhere else fades IN, which no
+ * physical impact does -- that symmetry is exactly why the first version of
+ * the settle tick was heard as a "blip" rather than as something being struck.
+ * The rise is still a curve rather than a step, so nothing clips.
+ */
+function clickCurve(riseFrac: number, steps = CURVE_STEPS): Float32Array {
+  const c = new Float32Array(steps);
+  const a = Math.max(1, Math.round(steps * riseFrac));
+  for (let i = 0; i < steps; i++) {
+    if (i < a) {
+      c[i] = 0.5 - 0.5 * Math.cos((Math.PI * i) / a);
+    } else {
+      const j = (i - a) / Math.max(1, steps - a - 1);
+      c[i] = Math.exp(-5.5 * j);
     }
   }
   c[0] = 0;
@@ -172,8 +220,9 @@ export class SoundscapeEngine {
   private opts: ResolvedOptions;
   private onSettle: ((mode: Mode) => void) | null;
   private gauss = gaussianCurve();
+  private click = clickCurve(0.06);
   private noiseBufferCache: AudioBuffer | null = null;
-  /** Oscillators of a scheduled-but-not-yet-sounded settle tick. */
+  /** Sources of a scheduled-but-not-yet-sounded settle tick. */
   private tickSources: AudioScheduledSourceNode[] = [];
   /** Timer that mirrors the scheduled tick back to the UI callback. */
   private tickTimer: number | null = null;
@@ -275,11 +324,11 @@ export class SoundscapeEngine {
     const next = this.buildLayer(mode, carriedPhase, false);
     this.layers.push(next);
 
-    // Mark the arrival, not the departure: the tick lands when the crossfade
-    // has finished, so it reads as "this mode has set in", not as a transition
-    // artefact. Scheduling it here also cancels any tick still pending from a
-    // mode change the user scrolled straight past.
-    this.scheduleSettleTick(now + MODE_FADE, next.root, mode);
+    // Mark the arrival, not the departure: the tick lands well after the
+    // crossfade has finished, so it reads as "this mode has set in", not as a
+    // transition artefact. Scheduling it here also cancels any tick still
+    // pending from a mode change the user scrolled straight past.
+    this.scheduleSettleTick(now + TICK_DELAY, mode);
   }
 
   stop(): void {
@@ -318,61 +367,71 @@ export class SoundscapeEngine {
   // -------------------------------------------------------------------------
 
   /**
-   * A soft confirmation tone marking the completion of a mode change.
+   * The sound of a mode having settled: a light switch being flipped.
    *
-   * Pitched at 4x and 6x the new mode's quantised root (two octaves, plus a
-   * fifth above that) so it is consonant with whatever is already sounding
-   * rather than an arbitrary beep. Enveloped with the same gaussian used by
-   * the pulse layer, so like everything else in this engine it has no
-   * instantaneous gain step and cannot read as a sharp attack.
+   * Two things make a switch sound like a switch rather than like a
+   * notification:
+   *
+   * - IT HAS NO PITCH. The source is filtered noise, not oscillators. Anything
+   *   with a definite fundamental is heard as a tone, and a short tone is a
+   *   blip. A mechanism is broadband.
+   * - IT IS TWO EVENTS, NOT ONE. A toggle switch clicks as the lever passes
+   *   its detent, then again as the contact seats, roughly 20ms later. The ear
+   *   fuses the pair into a single textured object -- that texture is the
+   *   entire difference between "mechanical" and "electronic". The first
+   *   transient is duller and quieter (a lever moving), the second brighter
+   *   and louder (metal meeting metal).
+   *
+   * Both use a percussive envelope rather than the engine's usual symmetric
+   * gaussian: an impact decays, it does not fade in. The rise is still 2.7ms
+   * of raised cosine rather than a step, so this stays within the engine's
+   * no-instantaneous-gain-step rule and cannot produce a real click artefact
+   * of the kind fixed elsewhere in this file.
    */
-  private scheduleSettleTick(at: number, root: number, mode: Mode): void {
+  private scheduleSettleTick(at: number, mode: Mode): void {
     const ctx = this.ctx;
     const master = this.master;
     if (!ctx || !master) return;
     this.cancelSettleTick();
 
-    const env = ctx.createGain();
-    // No setValueAtTime before the curve: the curve is already 0 at index 0,
-    // and an automation event inside a curve's window is a spec violation.
-    env.gain.setValueCurveAtTime(this.gauss, at, TICK_LEN);
+    const burst = (start: number, hz: number, q: number, gain: number) => {
+      const src = ctx.createBufferSource();
+      const buf = this.noiseBuffer(ctx);
+      src.buffer = buf;
+      // Start from a random point in the shared noise buffer so repeated
+      // flips are not bit-identical -- a mechanism is never exactly the same
+      // twice, and identical repetition is itself a synthetic cue.
+      const offset = Math.random() * (buf.duration - CLICK_LEN - 0.01);
 
-    const lp = ctx.createBiquadFilter();
-    lp.type = "lowpass";
-    lp.frequency.value = TICK_CUT;
+      const env = ctx.createGain();
+      // No setValueAtTime before the curve: the curve is already 0 at index 0,
+      // and an automation event inside a curve's window is a spec violation.
+      env.gain.setValueCurveAtTime(this.click, start, CLICK_LEN);
 
-    const amp = ctx.createGain();
-    amp.gain.value = TICK_GAIN;
+      const bp = ctx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = hz;
+      bp.Q.value = q;
 
-    const a = ctx.createOscillator();
-    a.type = "sine";
-    a.frequency.value = root * 4;
+      const amp = ctx.createGain();
+      amp.gain.value = TICK_GAIN * gain;
 
-    const b = ctx.createOscillator();
-    b.type = "sine";
-    b.frequency.value = root * 6;
-    const bGain = ctx.createGain();
-    bGain.gain.value = 0.35;
-
-    a.connect(env);
-    b.connect(bGain).connect(env);
-    env.connect(lp).connect(amp).connect(master);
-
-    a.start(at);
-    b.start(at);
-    a.stop(at + TICK_LEN);
-    b.stop(at + TICK_LEN);
-    a.onended = () => {
-      a.disconnect();
-      b.disconnect();
-      bGain.disconnect();
-      env.disconnect();
-      lp.disconnect();
-      amp.disconnect();
-      this.tickSources = this.tickSources.filter((s) => s !== a && s !== b);
+      src.connect(env).connect(bp).connect(amp).connect(master);
+      src.start(start, offset, CLICK_LEN);
+      src.onended = () => {
+        src.disconnect();
+        env.disconnect();
+        bp.disconnect();
+        amp.disconnect();
+        this.tickSources = this.tickSources.filter((s) => s !== src);
+      };
+      return src;
     };
 
-    this.tickSources = [a, b];
+    this.tickSources = [
+      burst(at, CLICK_LO_HZ, 0.9, 0.55),
+      burst(at + CLICK_GAP, CLICK_HI_HZ, 1.1, 1),
+    ];
 
     if (this.onSettle) {
       const delay = Math.max(0, (at - ctx.currentTime) * 1000);
