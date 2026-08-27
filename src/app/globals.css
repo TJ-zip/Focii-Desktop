@@ -406,6 +406,74 @@ kbd {
   text-shadow: 0 0 18px rgba(177, 18, 27, 0.9);
 }
 
+/* --- the dot, and what grows out of it ----------------------------------
+   The wrapper is only as wide as the dot, so the blob's 50% offset is the
+   dot's own centre. It stays 6px tall in flow: the blob is absolutely
+   positioned, so blooming never nudges the mode bar. --- */
+.dotwrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 6px;
+}
+
+.dothintlive {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* Concentric with the dot and scaled from its size, so the growth reads as
+   the dot itself opening rather than a popover appearing next to it. */
+.dothint {
+  display: inline-block;
+  white-space: nowrap;
+  max-width: 88vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0.42rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(177, 18, 27, 0.24);
+  border: 1px solid rgba(177, 18, 27, 0.5);
+  box-shadow: 0 0 26px rgba(177, 18, 27, 0.35);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: var(--fg);
+  font-size: 0.64rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0;
+  transform: scale(0.14);
+  /* Out is quicker than in: the collapse should feel like the blob being
+     pulled back into the dot, not like it fading out where it stands. */
+  transition: opacity 0.24s ease, transform 0.28s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.dothint[data-open="true"] {
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 0.34s ease,
+    transform 0.46s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+
+/* Pacing.
+   "quick" (line one) is a REPLY - it should arrive at about the speed of the
+   key press that asked for it, so it keeps the timings above.
+   "slow" (lines two and three) is the app volunteering something unasked,
+   so it opens roughly twice as gently and is drawn back in more softly too.
+   The easing loses its overshoot as well: a slow bounce reads as bounce,
+   where a fast one reads as spring. */
+.dothint[data-pace="slow"] {
+  transition: opacity 0.42s ease, transform 0.5s cubic-bezier(0.4, 0, 0.7, 0.4);
+}
+
+.dothint[data-pace="slow"][data-open="true"] {
+  transition: opacity 0.7s ease, transform 0.95s cubic-bezier(0.16, 0.7, 0.2, 1);
+}
+
 /* Circular center marker under the bar. It doubles as the arrow-arming
    indicator: the first arrow press does not change the mode, so something
    has to acknowledge it or the key feels broken. Sized in a wrapper-free
@@ -416,7 +484,7 @@ kbd {
   border-radius: 50%;
   background: var(--red);
   box-shadow: 0 0 12px rgba(177, 18, 27, 0.8);
-  transition: transform 0.32s ease, box-shadow 0.4s ease;
+  transition: transform 0.32s ease, box-shadow 0.4s ease, opacity 0.24s ease;
 }
 
 /* first press heard, waiting for the confirming second one */
@@ -429,6 +497,15 @@ kbd {
   transform: scale(1.45);
   box-shadow: 0 0 16px rgba(177, 18, 27, 1),
     0 0 0 5px rgba(177, 18, 27, 0.12);
+}
+
+/* While the blob is open the dot IS the blob, so it gets out of the way.
+   Declared after the arming rules so it wins on equal specificity even if
+   an arrow is armed at the same time. */
+.modedot[data-hidden="true"] {
+  opacity: 0;
+  transform: scale(0.2);
+  animation: none;
 }
 
 @keyframes dotarm {
@@ -460,6 +537,10 @@ kbd {
     grid-template-columns: 1fr;
     gap: 0.4rem;
   }
+  .dothint {
+    font-size: 0.6rem;
+    letter-spacing: 0.14em;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -484,7 +565,7 @@ kbd {
   /* The arming states still have to be legible without motion, so they
      become static brightness changes rather than disappearing entirely. */
   .modedot {
-    transition: none;
+    transition: opacity 0.2s ease;
   }
   .modedot[data-arm="pending"] {
     animation: none;
@@ -494,6 +575,26 @@ kbd {
     transform: none;
     box-shadow: 0 0 16px rgba(177, 18, 27, 1),
       0 0 0 4px rgba(177, 18, 27, 0.18);
+  }
+  .modedot[data-hidden="true"] {
+    transform: none;
+  }
+  /* No morph: the blob simply cross-fades in place at full size. The
+     information is identical; only the theatre is dropped. Pace still
+     applies - the slower lines keep their slower fade. */
+  .dothint,
+  .dothint[data-open="true"],
+  .dothint[data-pace="slow"],
+  .dothint[data-pace="slow"][data-open="true"] {
+    transform: none;
+  }
+  .dothint,
+  .dothint[data-open="true"] {
+    transition: opacity 0.25s ease;
+  }
+  .dothint[data-pace="slow"],
+  .dothint[data-pace="slow"][data-open="true"] {
+    transition: opacity 0.5s ease;
   }
 }
 
