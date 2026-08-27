@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Visualizer, { type VisualMode } from "../components/Visualizer";
 import CommandCenter from "../components/CommandCenter";
 import MeasurePane from "../components/MeasurePane";
+import Philosophy from "../components/Philosophy";
 import ModeDot, { type ArmState, type HintScope } from "../components/ModeDot";
 import SessionClock, { type Split } from "../components/SessionClock";
 import { SoundscapeEngine, SETTLE_DELAY } from "../audio/engine";
@@ -18,28 +19,22 @@ import {
 
 type Mode = VisualMode;
 
-const MODES: { id: Mode; label: string; blurb: string }[] = [
-  {
-    id: "focus",
-    label: "Focus",
-    blurb:
-      "3-min Initiation \u2192 12-min Transition \u2192 75-min Deep Focus \u2192 loops 12 \u2192 75 \u2026",
-  },
-  {
-    id: "relax",
-    label: "Relax",
-    blurb: "Ethereal pads, slow spatial movement, no beat.",
-  },
-  {
-    id: "sleep",
-    label: "Sleep",
-    blurb: "Dark drones, brown/pink noise, minimal motion.",
-  },
-  {
-    id: "pump",
-    label: "Pump",
-    blurb: "Driving percussion and bass momentum.",
-  },
+/**
+ * The modes carry a label and nothing else.
+ *
+ * They used to carry a one-line blurb rendered under the name. It was
+ * removed deliberately: a caption that explains the mechanism is a caption
+ * that keeps the mechanism in view, and the whole point of the session
+ * structure is that you stop noticing it. One of those blurbs also stated
+ * the 3 -> 12 -> 75 progression as though it were a property of Focus, when
+ * it is the shape of every session in every mode. That explanation now lives
+ * in Philosophy, where it can be read once, on purpose.
+ */
+const MODES: { id: Mode; label: string }[] = [
+  { id: "focus", label: "Focus" },
+  { id: "relax", label: "Relax" },
+  { id: "sleep", label: "Sleep" },
+  { id: "pump", label: "Pump" },
 ];
 
 /** Set once the user has successfully started a session on this device. */
@@ -155,8 +150,17 @@ export default function Home() {
   const [playing, setPlaying] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [measureOpen, setMeasureOpen] = useState(false);
+  const [philosophyOpen, setPhilosophyOpen] = useState(false);
   const [hasStarted, setHasStarted] = useState(true); // assume yes until localStorage says otherwise
   const [session, setSession] = useState({ name: "", elapsed: 0 });
+
+  /**
+   * True while any dialog owns the keyboard. All three are mutually
+   * exclusive - opening one closes the others - so this is really "is a
+   * dialog up", but naming it after the rule keeps the intent visible when a
+   * fourth panel is inevitably added.
+   */
+  const modalOpen = commandOpen || measureOpen || philosophyOpen;
 
   // Measurement. The tracker is a ref because it is written from a keydown
   // handler, a visibilitychange listener and an unmount cleanup - none of
@@ -486,6 +490,41 @@ export default function Home() {
     }
   }, []);
 
+  // --- dialogs ------------------------------------------------------------
+  //
+  // One panel at a time, always. Two stacked dialogs would mean two focus
+  // traps fighting, and an Escape whose meaning depends on which one won.
+
+  const openCommand = useCallback(() => {
+    cancelHints(true);
+    setMeasureOpen(false);
+    setPhilosophyOpen(false);
+    setCommandOpen(true);
+  }, [cancelHints]);
+
+  const closeAll = useCallback(() => {
+    setCommandOpen(false);
+    setMeasureOpen(false);
+    setPhilosophyOpen(false);
+  }, []);
+
+  /**
+   * Philosophy is reached from inside the command centre, and REPLACES it
+   * rather than covering it. Closing it therefore returns to the command
+   * centre, which is where the user was - dumping them back onto a bare
+   * session would lose their place.
+   */
+  const openPhilosophy = useCallback(() => {
+    setCommandOpen(false);
+    setMeasureOpen(false);
+    setPhilosophyOpen(true);
+  }, []);
+
+  const closePhilosophy = useCallback(() => {
+    setPhilosophyOpen(false);
+    setCommandOpen(true);
+  }, []);
+
   // Center of an item in the track's CONTENT coordinates.
   // Measured with bounding rects, so it does not depend on which ancestor
   // happens to be the offsetParent. The original offsetLeft-based math was
@@ -617,21 +656,23 @@ export default function Home() {
       if (isTypingTarget(e.target)) return;
 
       if (e.code === "Escape") {
-        if (commandOpen || measureOpen) {
+        if (modalOpen) {
           e.preventDefault();
-          setCommandOpen(false);
-          setMeasureOpen(false);
+          // Escape means "put it all away", including from Philosophy - it
+          // is the one exit that does not hand you back to the command
+          // centre, because it is the key you press when you want the
+          // session back.
+          closeAll();
         }
         return;
       }
 
       // The two panel chords are handled before the modal guard below, so
-      // each one closes the other rather than stacking two dialogs.
+      // each one closes the others rather than stacking dialogs.
       if (e.shiftKey && e.code === "KeyC") {
         e.preventDefault();
-        cancelHints(true); // they found it; the tail has nothing left to add
-        setMeasureOpen(false);
-        setCommandOpen((o) => !o);
+        if (commandOpen) closeAll();
+        else openCommand(); // they found it; the hint tail has nothing to add
         return;
       }
 
@@ -639,13 +680,14 @@ export default function Home() {
         e.preventDefault();
         cancelHints(true);
         setCommandOpen(false);
+        setPhilosophyOpen(false);
         setMeasureOpen((o) => !o);
         return;
       }
 
       // While a dialog is up it owns the keyboard, apart from the keys
       // handled above.
-      if (commandOpen || measureOpen) return;
+      if (modalOpen) return;
 
       if (e.code === "Space") {
         e.preventDefault(); // stop the page scrolling
@@ -692,9 +734,11 @@ export default function Home() {
   }, [
     arrowStep,
     cancelHints,
+    closeAll,
     commandOpen,
-    measureOpen,
+    modalOpen,
     noteDeadSpace,
+    openCommand,
     pauseAudio,
     scrollTo,
     startAudio,
@@ -779,11 +823,7 @@ export default function Home() {
         <button
           type="button"
           className="cmdbtn"
-          onClick={() => {
-            cancelHints(true);
-            setMeasureOpen(false);
-            setCommandOpen((o) => !o);
-          }}
+          onClick={() => (commandOpen ? closeAll() : openCommand())}
           aria-haspopup="dialog"
           aria-expanded={commandOpen}
         >
@@ -794,7 +834,13 @@ export default function Home() {
         </button>
       </div>
 
-      <CommandCenter open={commandOpen} onClose={() => setCommandOpen(false)} />
+      <CommandCenter
+        open={commandOpen}
+        onClose={() => setCommandOpen(false)}
+        onOpenPhilosophy={openPhilosophy}
+      />
+
+      <Philosophy open={philosophyOpen} onClose={closePhilosophy} />
 
       <MeasurePane
         open={measureOpen}
@@ -807,7 +853,6 @@ export default function Home() {
       <div className="hud">
         <p className="session">
           <strong>{active.label}</strong>
-          <span className="blurb">{active.blurb}</span>
         </p>
 
         <SessionClock
