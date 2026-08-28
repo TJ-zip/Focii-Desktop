@@ -38,6 +38,13 @@
  *    swell into the fade param meant a layer faded to +/-0.1 rather than to 0,
  *    so disposing it truncated a non-zero waveform and produced a click. The
  *    fade param must be owned by the fade alone.
+ *
+ * 6. AN ENGINE IS ONE PLAYING SESSION, NOT THE SESSION. stop() tears the graph
+ *    down completely; a resume builds a new engine and hands it the phase and
+ *    seed of the old one. Anything that has to survive a pause must therefore
+ *    be expressible as a constructor option -- it cannot live only in a
+ *    scheduled node, because scheduled nodes die with the context. `settleIn`
+ *    exists for exactly that reason.
  */
 
 import {
@@ -82,6 +89,25 @@ const TICK_DELAY = 4.0;
  * different files will eventually stop being equal, so there is only one.
  */
 export const SETTLE_DELAY = TICK_DELAY;
+
+/**
+ * How long a resumed session should wait before finishing an interrupted
+ * settle, given the time that was still outstanding when it was paused.
+ *
+ * Bounded at both ends, and both bounds matter:
+ *
+ * - The lower bound is EDGE_FADE, because a resume fades the master in from
+ *   silence over that long. A tick scheduled inside the fade is attenuated by
+ *   it, so a pause taken with 0.2s left would produce an almost inaudible
+ *   flip -- the one sound in the app that must not be missed. Waiting out the
+ *   fade costs a moment and guarantees the tick lands at full weight.
+ * - The upper bound is TICK_DELAY, so a corrupted or absurd remainder can
+ *   never leave the reel spinning longer than a fresh mode change would.
+ */
+export function resumeSettleDelay(remaining: number): number {
+  if (!Number.isFinite(remaining)) return EDGE_FADE;
+  return Math.max(EDGE_FADE, Math.min(TICK_DELAY, remaining));
+}
 
 /** Duration of each of the two switch transients, in seconds. */
 const CLICK_LEN = 0.045;
@@ -217,6 +243,18 @@ export interface EngineOptions {
   /** Master volume 0..1. Default 0.9. */
   volume?: number;
   /**
+   * Seconds after start() at which to sound a settle tick, or omitted for the
+   * normal case of none.
+   *
+   * This exists for one situation: the session was paused partway through a
+   * mode settling, and is now resuming with that settle still outstanding.
+   * The pending tick could not survive the pause, because stop() closes the
+   * AudioContext that had it scheduled, so the resumed engine has to be told
+   * to finish the job. Pass the remaining delay through resumeSettleDelay()
+   * to get a value that will actually be audible.
+   */
+  settleIn?: number;
+  /**
    * Fired when a mode change has fully settled, at the same instant as the
    * audible settle tick. Lets the UI resolve a visual transition in sync with
    * what is heard rather than guessing at a duration.
@@ -224,7 +262,13 @@ export interface EngineOptions {
   onSettle?: (mode: Mode) => void;
 }
 
-type ResolvedOptions = Required<Omit<EngineOptions, "onSettle">>;
+interface ResolvedOptions {
+  phase: number;
+  seed: number;
+  volume: number;
+  /** null means "no settle outstanding", which is the ordinary case. */
+  settleIn: number | null;
+}
 
 export class SoundscapeEngine {
   private ctx: AudioContext | null = null;
@@ -247,6 +291,10 @@ export class SoundscapeEngine {
       phase: options.phase ?? 0,
       seed: options.seed ?? Math.floor(Math.random() * 1e9),
       volume: options.volume ?? 0.9,
+      settleIn:
+        typeof options.settleIn === "number" && Number.isFinite(options.settleIn)
+          ? Math.max(0, options.settleIn)
+          : null,
     };
     this.onSettle = options.onSettle ?? null;
   }
@@ -327,6 +375,16 @@ export class SoundscapeEngine {
     this.layers.push(this.buildLayer(mode, this.opts.phase, true));
     this.tick();
     this.timer = window.setInterval(() => this.tick(), SCHEDULE_INTERVAL);
+
+    // A settle that a pause interrupted. There is no crossfade here -- the
+    // mode change itself happened before the pause and its layers are long
+    // gone -- so this schedules the tick alone, which is the only part of the
+    // settle that was still outstanding.
+    if (this.opts.settleIn !== null) {
+      const at = ctx.currentTime + resumeSettleDelay(this.opts.settleIn);
+      this.opts.settleIn = null; // one-shot: a later setMode owns the next one
+      this.scheduleSettleTick(at, mode);
+    }
   }
 
   /** Crossfade to another mode without interrupting the session clock. */

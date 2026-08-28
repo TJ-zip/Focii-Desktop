@@ -4,9 +4,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Visualizer, { type VisualMode } from "../components/Visualizer";
 import CommandCenter from "../components/CommandCenter";
 import MeasurePane from "../components/MeasurePane";
+import Philosophy from "../components/Philosophy";
 import ModeDot, { type ArmState, type HintScope } from "../components/ModeDot";
-import SessionClock, { type Split } from "../components/SessionClock";
-import { SoundscapeEngine, SETTLE_DELAY } from "../audio/engine";
+import SessionClock, {
+  easeInOutCubic,
+  type Split,
+} from "../components/SessionClock";
+import {
+  SoundscapeEngine,
+  SETTLE_DELAY,
+  resumeSettleDelay,
+} from "../audio/engine";
 import { SECTIONS, sectionAt } from "../audio/presets";
 import {
   isRecording,
@@ -18,28 +26,22 @@ import {
 
 type Mode = VisualMode;
 
-const MODES: { id: Mode; label: string; blurb: string }[] = [
-  {
-    id: "focus",
-    label: "Focus",
-    blurb:
-      "3-min Initiation \u2192 12-min Transition \u2192 75-min Deep Focus \u2192 loops 12 \u2192 75 \u2026",
-  },
-  {
-    id: "relax",
-    label: "Relax",
-    blurb: "Ethereal pads, slow spatial movement, no beat.",
-  },
-  {
-    id: "sleep",
-    label: "Sleep",
-    blurb: "Dark drones, brown/pink noise, minimal motion.",
-  },
-  {
-    id: "pump",
-    label: "Pump",
-    blurb: "Driving percussion and bass momentum.",
-  },
+/**
+ * The modes carry a label and nothing else.
+ *
+ * They used to carry a one-line blurb rendered under the name. It was
+ * removed deliberately: a caption that explains the mechanism is a caption
+ * that keeps the mechanism in view, and the whole point of the session
+ * structure is that you stop noticing it. One of those blurbs also stated
+ * the 3 -> 12 -> 75 progression as though it were a property of Focus, when
+ * it is the shape of every session in every mode. That explanation now lives
+ * in Philosophy, where it can be read once, on purpose.
+ */
+const MODES: { id: Mode; label: string }[] = [
+  { id: "focus", label: "Focus" },
+  { id: "relax", label: "Relax" },
+  { id: "sleep", label: "Sleep" },
+  { id: "pump", label: "Pump" },
 ];
 
 /** Set once the user has successfully started a session on this device. */
@@ -155,8 +157,17 @@ export default function Home() {
   const [playing, setPlaying] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [measureOpen, setMeasureOpen] = useState(false);
+  const [philosophyOpen, setPhilosophyOpen] = useState(false);
   const [hasStarted, setHasStarted] = useState(true); // assume yes until localStorage says otherwise
   const [session, setSession] = useState({ name: "", elapsed: 0 });
+
+  /**
+   * True while any dialog owns the keyboard. All three are mutually
+   * exclusive - opening one closes the others - so this is really "is a
+   * dialog up", but naming it after the rule keeps the intent visible when a
+   * fourth panel is inevitably added.
+   */
+  const modalOpen = commandOpen || measureOpen || philosophyOpen;
 
   // Measurement. The tracker is a ref because it is written from a keydown
   // handler, a visibilitychange listener and an unmount cleanup - none of
@@ -181,9 +192,19 @@ export default function Home() {
    *
    * `splitId` only ever increases, so a mode change that interrupts a split
    * in progress cannot be finished by the previous run's timers.
+   *
+   * Both timed stages are suspendable. A pause nulls the relevant wall-clock
+   * stamp; a resume restores it. Nothing about a split is derived from the
+   * audio clock, because the audio clock does not survive a pause - the
+   * engine is destroyed and rebuilt, and its modeElapsed restarts at zero.
    */
   const [split, setSplit] = useState<Split | null>(null);
   const splitId = useRef(0);
+  /**
+   * Mirror of `split` for the benefit of startAudio, which must read it
+   * inside a user-gesture handler and therefore cannot depend on it.
+   */
+  const splitRef = useRef<Split | null>(null);
 
   // Arrow arming. The ref carries the logic (it must be readable from inside
   // a keydown handler without re-binding the listener); the state exists only
@@ -211,6 +232,10 @@ export default function Home() {
   useEffect(() => {
     hintRunRef.current = hintRun;
   }, [hintRun]);
+
+  useEffect(() => {
+    splitRef.current = split;
+  }, [split]);
 
   // Read on the client only: touching localStorage during render would drive
   // the server and client markup apart and produce a hydration mismatch.
@@ -319,7 +344,10 @@ export default function Home() {
       id: ++splitId.current,
       stage: "rolling",
       from: engine.elapsed,
+      rollMs: SETTLE_DELAY * 1000,
+      rollStart: performance.now(),
       modeElapsed: 0,
+      settleStart: null,
     });
   }, [mode, flushSpan]);
 
@@ -341,22 +369,59 @@ export default function Home() {
       if (seedRef.current === null) {
         seedRef.current = Math.floor(Math.random() * 1e9);
       }
+
+      // A settle that a pause froze partway through. The engine that had the
+      // tick scheduled is gone, so the new one has to be told to finish it,
+      // and the reel has to be restarted over the same remainder so that the
+      // two still land together.
+      const pending = splitRef.current;
+      const resumeRoll =
+        pending && pending.stage === "rolling" && pending.rollStart === null
+          ? resumeSettleDelay(pending.rollMs / 1000)
+          : null;
+
       // Constructed here, inside the key/click handler: browsers only allow an
       // AudioContext to start from a user gesture.
       const next = new SoundscapeEngine({
         phase: phaseRef.current,
         seed: seedRef.current,
+        settleIn: resumeRoll ?? undefined,
         // Fires at the same instant the tick sounds, so the reel landing on
         // 0:00 and the mode audibly setting in are one event, not two.
         onSettle: () =>
           setSplit((s) =>
-            s ? { ...s, stage: "settling", modeElapsed: 0 } : s
+            s
+              ? {
+                  ...s,
+                  stage: "settling",
+                  modeElapsed: 0,
+                  settleStart: performance.now(),
+                }
+              : s
           ),
       });
       await next.start(modeRef.current);
       engineRef.current = next;
       setPlaying(true);
       setHasStarted(true);
+
+      // Restart whichever half of the split was suspended. Stamped now rather
+      // than at the pause, so the time spent paused is time the settle simply
+      // did not spend - which is the whole point of freezing it.
+      if (resumeRoll !== null) {
+        const at = performance.now();
+        setSplit((s) =>
+          s && s.stage === "rolling" && s.rollStart === null
+            ? { ...s, rollMs: resumeRoll * 1000, rollStart: at }
+            : s
+        );
+      } else {
+        setSplit((s) =>
+          s && s.stage === "settling" && s.settleStart === null
+            ? { ...s, settleStart: performance.now() - s.modeElapsed * 1000 }
+            : s
+        );
+      }
 
       // A resume continues the same measured session; only a tab that has
       // never played starts a new one. This matches the audio, which resumes
@@ -395,9 +460,38 @@ export default function Home() {
     engineRef.current = null;
     setPlaying(false);
     setSession({ name: sectionAt(at).name, elapsed: at });
-    // A pause cancels a settle in progress: the engine's pending tick dies
-    // with the graph, so nothing would ever advance the split past `rolling`.
-    setSplit(null);
+
+    // A pause SUSPENDS a settle; it does not cancel one. The mode change
+    // already happened and will still be in force on resume, so throwing the
+    // split away would leave the switch without an ending: no landing, no
+    // flip, no settling window. Instead both timed stages freeze in place and
+    // are handed back their remainder when the session returns.
+    const now = performance.now();
+    setSplit((s) => {
+      if (!s) return s;
+      if (s.stage === "rolling" && s.rollStart !== null) {
+        // Evaluate the easing at the instant of the pause, so `from` becomes
+        // exactly the number that was on screen. Anything else and the reel
+        // visibly jumps the moment P is pressed.
+        const p =
+          s.rollMs > 0 ? Math.min(1, (now - s.rollStart) / s.rollMs) : 1;
+        return {
+          ...s,
+          from: s.from * (1 - easeInOutCubic(p)),
+          rollMs: Math.max(0, s.rollMs - (now - s.rollStart)),
+          rollStart: null,
+        };
+      }
+      if (s.stage === "settling" && s.settleStart !== null) {
+        // Bank the settling time so far. Paused time is not settling time.
+        return {
+          ...s,
+          modeElapsed: (now - s.settleStart) / 1000,
+          settleStart: null,
+        };
+      }
+      return s;
+    });
 
     // Stop the clock on the current span and bank the session. Paused time
     // is not listening time, so `since` goes null rather than continuing.
@@ -484,6 +578,41 @@ export default function Home() {
       d.n = 0;
       setHintRun((r) => r + 1);
     }
+  }, []);
+
+  // --- dialogs ------------------------------------------------------------
+  //
+  // One panel at a time, always. Two stacked dialogs would mean two focus
+  // traps fighting, and an Escape whose meaning depends on which one won.
+
+  const openCommand = useCallback(() => {
+    cancelHints(true);
+    setMeasureOpen(false);
+    setPhilosophyOpen(false);
+    setCommandOpen(true);
+  }, [cancelHints]);
+
+  const closeAll = useCallback(() => {
+    setCommandOpen(false);
+    setMeasureOpen(false);
+    setPhilosophyOpen(false);
+  }, []);
+
+  /**
+   * Philosophy is reached from inside the command centre, and REPLACES it
+   * rather than covering it. Closing it therefore returns to the command
+   * centre, which is where the user was - dumping them back onto a bare
+   * session would lose their place.
+   */
+  const openPhilosophy = useCallback(() => {
+    setCommandOpen(false);
+    setMeasureOpen(false);
+    setPhilosophyOpen(true);
+  }, []);
+
+  const closePhilosophy = useCallback(() => {
+    setPhilosophyOpen(false);
+    setCommandOpen(true);
   }, []);
 
   // Center of an item in the track's CONTENT coordinates.
@@ -617,21 +746,23 @@ export default function Home() {
       if (isTypingTarget(e.target)) return;
 
       if (e.code === "Escape") {
-        if (commandOpen || measureOpen) {
+        if (modalOpen) {
           e.preventDefault();
-          setCommandOpen(false);
-          setMeasureOpen(false);
+          // Escape means "put it all away", including from Philosophy - it
+          // is the one exit that does not hand you back to the command
+          // centre, because it is the key you press when you want the
+          // session back.
+          closeAll();
         }
         return;
       }
 
       // The two panel chords are handled before the modal guard below, so
-      // each one closes the other rather than stacking two dialogs.
+      // each one closes the others rather than stacking dialogs.
       if (e.shiftKey && e.code === "KeyC") {
         e.preventDefault();
-        cancelHints(true); // they found it; the tail has nothing left to add
-        setMeasureOpen(false);
-        setCommandOpen((o) => !o);
+        if (commandOpen) closeAll();
+        else openCommand(); // they found it; the hint tail has nothing to add
         return;
       }
 
@@ -639,13 +770,14 @@ export default function Home() {
         e.preventDefault();
         cancelHints(true);
         setCommandOpen(false);
+        setPhilosophyOpen(false);
         setMeasureOpen((o) => !o);
         return;
       }
 
       // While a dialog is up it owns the keyboard, apart from the keys
       // handled above.
-      if (commandOpen || measureOpen) return;
+      if (modalOpen) return;
 
       if (e.code === "Space") {
         e.preventDefault(); // stop the page scrolling
@@ -692,9 +824,11 @@ export default function Home() {
   }, [
     arrowStep,
     cancelHints,
+    closeAll,
     commandOpen,
-    measureOpen,
+    modalOpen,
     noteDeadSpace,
+    openCommand,
     pauseAudio,
     scrollTo,
     startAudio,
@@ -702,9 +836,12 @@ export default function Home() {
 
   // session readout, and the slow half of the split timer.
   //
-  // Both clocks are derived from the engine, i.e. from the AudioContext's own
-  // clock, rather than from counting interval fires. A dropped or throttled
-  // interval therefore costs a visual update, never accumulated drift.
+  // The session clock is read from the engine, i.e. from the AudioContext's
+  // own clock, so a dropped or throttled interval costs a visual update and
+  // never accumulated drift. The settling clock cannot use that source: it
+  // has to survive a pause, and the engine that would have been measuring it
+  // is destroyed by one. It is anchored to a performance.now() stamp that the
+  // pause moves instead.
   useEffect(() => {
     if (!playing) return;
     const id = window.setInterval(() => {
@@ -714,11 +851,11 @@ export default function Home() {
       setSession({ name: sectionAt(e).name, elapsed: e });
 
       setSplit((s) => {
-        if (!s || s.stage !== "settling") return s;
-        // modeElapsed runs from the START of the crossfade, but the red clock
-        // starts from the tick, so the delay comes back off.
-        const m = Math.max(0, engine.modeElapsed - SETTLE_DELAY);
-        if (m >= SETTLE_SECONDS) return { ...s, stage: "summing" };
+        if (!s || s.stage !== "settling" || s.settleStart === null) return s;
+        const m = (performance.now() - s.settleStart) / 1000;
+        if (m >= SETTLE_SECONDS) {
+          return { ...s, stage: "summing", modeElapsed: SETTLE_SECONDS };
+        }
         return { ...s, modeElapsed: m };
       });
     }, 1000);
@@ -779,11 +916,7 @@ export default function Home() {
         <button
           type="button"
           className="cmdbtn"
-          onClick={() => {
-            cancelHints(true);
-            setMeasureOpen(false);
-            setCommandOpen((o) => !o);
-          }}
+          onClick={() => (commandOpen ? closeAll() : openCommand())}
           aria-haspopup="dialog"
           aria-expanded={commandOpen}
         >
@@ -794,7 +927,13 @@ export default function Home() {
         </button>
       </div>
 
-      <CommandCenter open={commandOpen} onClose={() => setCommandOpen(false)} />
+      <CommandCenter
+        open={commandOpen}
+        onClose={() => setCommandOpen(false)}
+        onOpenPhilosophy={openPhilosophy}
+      />
+
+      <Philosophy open={philosophyOpen} onClose={closePhilosophy} />
 
       <MeasurePane
         open={measureOpen}
@@ -807,7 +946,6 @@ export default function Home() {
       <div className="hud">
         <p className="session">
           <strong>{active.label}</strong>
-          <span className="blurb">{active.blurb}</span>
         </p>
 
         <SessionClock
@@ -816,7 +954,6 @@ export default function Home() {
           paused={paused}
           visible={playing || paused}
           split={split}
-          rollMs={SETTLE_DELAY * 1000}
           settleSeconds={SETTLE_SECONDS}
         />
 
