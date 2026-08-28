@@ -7,6 +7,9 @@
  * (tempo, transient count, dynamic range). Any change made here must be made
  * there too, or the two will silently drift apart.
  *
+ * That is not left to discipline: `python3 generator/engine_ref.py --check`
+ * parses this file and fails when the two disagree, and CI runs it.
+ *
  * focus/* values are measured from the Endel Focus reference profile
  * (generator/endel_focus_profile.json). relax/sleep/pump are design defaults
  * awaiting reference-track profiling.
@@ -184,7 +187,12 @@ export function sectionAt(elapsed: number): SectionState {
     // Transition: gentle lift into the long block.
     return { name: "transition", intensity: 0.7 + 0.15 * (cycle / 720.0) };
   }
-  // Deep: settled, with a slow ultradian breathe (~110 min) per Endel's model.
+  // Deep: settled, with one slow breathe across the 4500 s (75 min) deep
+  // block, after which transition + deep repeat as an 87-minute cycle.
+  //
+  // A previous version of this comment said "~110 min per Endel's model".
+  // No span in this file is 110 minutes, so the number was describing
+  // nothing; the durations above are the authoritative ones.
   const u = (cycle - 720.0) / 4500.0;
   return { name: "deep", intensity: 0.82 + 0.1 * Math.sin(2 * Math.PI * u) };
 }
