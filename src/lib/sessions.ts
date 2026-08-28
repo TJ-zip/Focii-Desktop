@@ -13,6 +13,8 @@
  * That is the trade for it never leaving the device.
  */
 
+import { KEYS, ensureMigrated, removeWithLegacy } from "./storage";
+
 /** Seconds spent in one mode within a session. */
 export interface ModeSpan {
   mode: string;
@@ -42,8 +44,8 @@ export interface LiveSession {
   spans: ModeSpan[];
 }
 
-const STORE_KEY = "soundscape.sessions";
-const RECORD_KEY = "soundscape.recording";
+const STORE_KEY = KEYS.sessions;
+const RECORD_KEY = KEYS.recording;
 
 /**
  * Below this, it was not a session. Someone pressed Space and changed their
@@ -79,6 +81,7 @@ export const MAX_SESSIONS = 5000;
 
 export function isRecording(): boolean {
   if (typeof window === "undefined") return false;
+  ensureMigrated();
   try {
     return window.localStorage.getItem(RECORD_KEY) !== "0";
   } catch {
@@ -104,6 +107,7 @@ export function setRecording(on: boolean): void {
  */
 export function loadSessions(): SessionRecord[] {
   if (typeof window === "undefined") return [];
+  ensureMigrated();
   try {
     const raw = window.localStorage.getItem(STORE_KEY);
     if (!raw) return [];
@@ -151,11 +155,9 @@ export function saveSession(rec: SessionRecord): SessionRecord[] {
 
 export function clearSessions(): void {
   if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(STORE_KEY);
-  } catch {
-    // nothing to do; there was nothing readable to clear
-  }
+  // Drops the pre-rename copy too, otherwise the migration would restore
+  // the cleared history on the next page load.
+  removeWithLegacy(STORE_KEY);
 }
 
 /* --- formatting --------------------------------------------------------- */
@@ -285,7 +287,7 @@ export function downloadCSV(list: SessionRecord[]): boolean {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `soundscape-sessions-${new Date()
+  a.download = `focii-sessions-${new Date()
     .toISOString()
     .slice(0, 10)}.csv`;
   // Firefox will not act on a click for an element outside the document.
