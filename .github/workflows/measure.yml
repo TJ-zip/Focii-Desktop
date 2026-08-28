@@ -1,0 +1,110 @@
+name: measure
+
+# Runs the offline reference renderer and publishes its numbers, so a claim
+# about the engine's tempo or transients is a claim with a workflow run behind
+# it rather than a claim made by reading code.
+#
+# It is NOT a gate. `validate.yml` decides whether a branch is mergeable; this
+# job produces evidence.
+#
+# WHY IT PUBLISHES RATHER THAN COMMITS
+# ------------------------------------
+# The first version committed generator/measurements.md back to the branch.
+# That worked, and it was wrong. Commits made with GITHUB_TOKEN deliberately
+# trigger no workflows -- which is what stops a self-committing job from
+# looping forever, but it also means the bot's commit becomes the head of the
+# pull request and no `validate` run ever exists for it. PR #18 spent its
+# first minutes with a green measurement and no build check whatsoever.
+#
+# Publishing to the job summary and a PR comment has neither problem, needs no
+# write access to the repository, and puts the numbers where someone reviewing
+# the PR will actually see them. generator/measurements.md stays in the repo as
+# a human-committed snapshot; regenerate it from a run when it matters.
+#
+# Path filter: a branch that only touches CSS cannot change a render, and a
+# four-mode 120 s render is not free. Use workflow_dispatch to force a run.
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+      - 'fix/**'
+      - 'refactor/**'
+    paths:
+      - 'generator/**'
+      - 'src/audio/**'
+      - '.github/workflows/measure.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: measure-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install numpy
+        run: python -m pip install --disable-pip-version-check --quiet numpy
+
+      # Order matters. If the measurement code is broken its numbers are
+      # worthless, so the self-test runs first and a failure stops the job
+      # before any figure is published anywhere.
+      - name: Self-test the measurement code
+        run: python generator/engine_ref.py --selftest
+
+      # Then: does the reference renderer still agree with the presets the app
+      # actually ships? A silent divergence here would make every number below
+      # a measurement of the wrong engine.
+      - name: Check engine_ref.py against presets.ts
+        run: python generator/engine_ref.py --check
+
+      - name: Measure every mode
+        run: |
+          set -euo pipefail
+          {
+            echo "## Engine measurements"
+            echo
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- branch: \`${GITHUB_REF_NAME}\`"
+            echo "- render: 120 s per mode, 44100 Hz, seed 12345, first 2 s"
+            echo "  excluded from analysis (that is the master fade-in, not the music)"
+            echo
+            echo "Measurements of the Python reference renderer: exact for the PRNG,"
+            echo "the envelopes, the beat grid and the panning law; approximate for"
+            echo "the biquad and the compressor. See the module docstring in"
+            echo "\`generator/engine_ref.py\` for the full faithful-vs-approximate list."
+            echo
+          } > report.md
+          python generator/engine_ref.py \
+            --measure --all --seconds 120 --compare --markdown >> report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          cat report.md
+
+      # Best-effort: a push to a branch with no open PR is not a failure.
+      - name: Comment on the pull request
+        if: github.event_name != 'workflow_dispatch' && github.ref_name != 'main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --head "${GITHUB_REF_NAME}" --state open \
+                 --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            echo "No open PR for ${GITHUB_REF_NAME}; report is in the job summary."
+            exit 0
+          fi
+          gh pr comment "$pr" --body-file report.md
