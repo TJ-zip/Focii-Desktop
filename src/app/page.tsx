@@ -18,12 +18,13 @@ import SkipPrompt, {
   SKIP_HOLD,
 } from "../components/SkipPrompt";
 import Blackout, { type Screen } from "../components/Blackout";
+import Wordmark from "../components/Wordmark";
 import SessionClock, {
   easeInOutCubic,
   type Split,
 } from "../components/SessionClock";
 import {
-  SoundscapeEngine,
+  FociiEngine,
   SETTLE_DELAY,
   resumeSettleDelay,
 } from "../audio/engine";
@@ -35,6 +36,7 @@ import {
   MIN_RECORD_SECONDS,
   type LiveSession,
 } from "../lib/sessions";
+import { KEYS, ensureMigrated } from "../lib/storage";
 
 type Mode = VisualMode;
 
@@ -57,12 +59,12 @@ const MODES: { id: Mode; label: string }[] = [
 ];
 
 /** Set once the user has successfully started a session on this device. */
-const STARTED_KEY = "soundscape.hasStarted";
+const STARTED_KEY = KEYS.started;
 /**
  * Set once the onboarding tail of the hint sequence - lines two and three -
  * has been seen or acted on. Line one is never gated by this.
  */
-const HINTS_KEY = "soundscape.hintsSeen";
+const HINTS_KEY = KEYS.hints;
 
 /**
  * How long the red clock counts before the two clocks merge.
@@ -202,7 +204,7 @@ export default function Home() {
   const wheelLock = useRef(0);
   const active = MODES.find((m) => m.id === mode)!;
 
-  const engineRef = useRef<SoundscapeEngine | null>(null);
+  const engineRef = useRef<FociiEngine | null>(null);
   const startingRef = useRef(false);
   /**
    * Session offset to resume from, in seconds. Pause writes the engine's
@@ -344,6 +346,7 @@ export default function Home() {
   // Read on the client only: touching localStorage during render would drive
   // the server and client markup apart and produce a hydration mismatch.
   useEffect(() => {
+    ensureMigrated();
     try {
       setHasStarted(window.localStorage.getItem(STARTED_KEY) === "1");
       const seen = window.localStorage.getItem(HINTS_KEY) === "1";
@@ -509,7 +512,7 @@ export default function Home() {
 
       // Constructed here, inside the key/click handler: browsers only allow an
       // AudioContext to start from a user gesture.
-      const next = new SoundscapeEngine({
+      const next = new FociiEngine({
         phase: phaseRef.current,
         seed: seedRef.current,
         settleIn: resumeRoll ?? undefined,
@@ -1245,7 +1248,7 @@ export default function Home() {
   return (
     <main>
       <Visualizer mode={mode} paused={screen !== null} />
-      <span className="wordmark">Soundscape</span>
+      <Wordmark />
 
       {/* Borderless, top-right. Hover or keyboard focus reveals the chord, so
           the shortcut is discoverable without the label shouting it.
@@ -1324,7 +1327,7 @@ export default function Home() {
           ref={trackRef}
           className="modebar"
           role="radiogroup"
-          aria-label="Soundscape mode"
+          aria-label="Focii mode"
           tabIndex={0}
           onScroll={onScroll}
         >

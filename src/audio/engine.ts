@@ -292,7 +292,7 @@ interface ResolvedOptions {
   settleIn: number | null;
 }
 
-export class SoundscapeEngine {
+export class FociiEngine {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private layers: Layer[] = [];
