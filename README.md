@@ -1,66 +1,110 @@
-# soundscape-v1-temp
+# Focii
 
-Temporary file-sharing/documentation repo for a personal **Endel-inspired soundscape app** project. This README is the **handoff document** so any new chat/session can continue without losing context. Full context was recovered from the previous chat transcript (PDF).
+Multiple modes of focus.
 
-> Note: the v1 FLAC audio files were shared as chat attachments, **not committed to this repo** (this environment has no network egress; the GitHub tools handle text only, so large binaries can't be pushed). This repo holds documentation only.
+A personal, Endel-inspired generative soundscape app. Four modes — **Focus**, **Relax**, **Sleep**, **Pump** — synthesised live in the browser through the Web Audio API, behind a near-black canvas visualiser in deep red.
+
+Nothing is streamed and nothing is prerendered. There are no audio files: every session is built from oscillators, filtered noise and scheduled envelopes at runtime, seeded once per tab so that pausing and resuming continues the same session rather than starting a different one.
+
+> The repository slug is still `soundscape-v1-temp`, which predates the name. Renaming it is a repository-settings action.
 
 ---
 
-## 1. Project concept
+## Stack
 
-A personal generative-soundscape app inspired by Endel (researched: Endel Pacific engine, pentatonic-scale palette, layered adaptive sound). Four modes, rendered as finite loop-safe files instead of a real-time stream:
+| | |
+|---|---|
+| Framework | Next.js 16.3.0 (App Router) |
+| UI | React 19, TypeScript 5.6 |
+| Audio | Web Audio API, no libraries |
+| Visuals | Canvas 2D, no libraries |
+| Styling | `globals.css` plus CSS Modules where a component owns its own look |
+| Hosting | Vercel |
 
-| Mode | v1 character | v1 delivered | User feedback so far |
-|-------|--------------|--------------|----------------------|
-| Focus | Pentatonic layers + string plucks | Full 5-min FLAC | "More ethereal/relaxing than focus; string plucks were distracting. Overall very nice. Loop was nice." Wants more directional/spatial bass feel like Endel. |
-| Sleep | Dark drones + colored noise | Full 5-min FLAC (`sleep_5min_v1.flac`, 9.1 MB) | Pending |
-| Pump | Kick + hats + bassline loop | Part 1 only (`pump_5min_v1_part1.flac`, 10.9 MB, first 100 s, standalone valid FLAC) | Pending |
-| Relax | Long pad swells, no beat, pink-noise bed | Part 1 only (`relax_5min_v1_part1.flac`, 10.1 MB, first 100 s) | Pending |
+No runtime dependencies beyond React and Next. No environment variables. No database, no API routes, no server state — the whole app is a client component and a canvas.
 
-Parts 2–3 of Pump/Relax (~10–11 MB each) can be regenerated/split the same way if needed. Audio files themselves did NOT survive the chat transition — they must be regenerated (generation is deterministic-capable and cheap).
+## Session structure
 
-## 2. v2 sound direction (agreed, pending final lock after full listening notes)
+Every session, in every mode, follows the same shape:
 
-- **Focus**: less ethereal; remove prominent string plucks; steady understated rhythmic pulse (~60–70 BPM) + subdued bass movement; melodies extremely sparse and blurred into texture; stereo movement via slow binaural panning, phase differences, delays, filtered bass harmonics — directional but not distracting.
-- **Relax**: preserve the ethereal character (user liked it in the Focus v1); slow spatial movement, warm pads, no obvious beat.
-- **Sleep**: darker, softer; mostly brown/pink noise and low drones; minimal directional motion (headphone comfort).
-- **Pump**: driving percussion, bass rhythm, forward momentum; energetic not aggressive; no distracting lead melody.
+1. **Initiation** — 3 minutes. Intensity climbs from near-nothing to full.
+2. **Transition** — 12 minutes.
+3. **Deep** — 75 minutes, then it returns to Transition and alternates.
 
-## 3. Focus-session structure (agreed)
+Changing mode does **not** restart the session clock. The engine crossfades between modes and marks the change with a settle tick, so the progression through the structure is preserved across a mode switch.
 
-1. **3-minute Initiation** — always identical; conditioning cue (bell-ring psychology); plays only once per session.
-2. **12-minute Transition** — blends seamlessly from Initiation into sustained focus.
-3. **75-minute Deep Focus** — continues seamlessly; after it ends, loop back to the **12-minute Transition** (never the 3-minute file).
+If you do not want to ease in, you do not have to. A few seconds into a session — or into a mode change — the mode name grows a red word beside it (**Focus Attack?**, **Relax Better?**, **Sleep Easier?**, **Pump Harder?**). Taking it fast-forwards past the remaining Initiation, landing on a whole beat so pulsed modes stay on the grid. It is also always available on <kbd>Alt</kbd>+<kbd>K</kbd>, whether or not the offer is currently on screen.
 
-Sequence: **3 → 12 → 75 → 12 → 75 → …** Use ~8–15-second overlapping crossfades between files (two overlapped players), not exact file-boundary looping. 90-minute blocks = peak focus rationale.
+## Keyboard
 
-## 4. Interface plan (agreed)
+The app is keyboard-first; there is no transport button.
 
-- **TypeScript + Three.js**, likely lightweight React/Vite app; deploy to Vercel.
-- Near-black background, restrained deep-red forms/glow. **No squares or squircles anywhere** (user banned them project-wide).
-- One continuously evolving central visual — slow, organic, dimensional, responsive to current phase; subtle audio-reactivity from broad energy bands only.
-- Reduced-motion support + simple non-WebGL fallback.
-- Controls: start session, pause, phase indicator, elapsed/remaining time, volume, spatial-intensity control, mode selection. No dashboards, no bright UI.
-- Visual reference: **https://teja-for-ted-x-ecru.vercel.app/** (black/red, restrained animation — inspiration, not copying). Its source repo was not discoverable by name; **user must share the GitHub repo URL** before implementation to inspect the Three.js visuals.
+| Key | Action |
+|---|---|
+| <kbd>Space</kbd> | Begin. Deliberately *not* a toggle — pressing it while playing does nothing, and pressing it twice asks the red dot for help |
+| <kbd>P</kbd> | Pause. Holds your place in the session structure |
+| <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> | Change mode. The **first press only arms** — press twice to move (see below) |
+| <kbd>Home</kbd> / <kbd>End</kbd> | First / last mode |
+| <kbd>Shift</kbd>+<kbd>C</kbd> | Command centre |
+| <kbd>Shift</kbd>+<kbd>M</kbd> | Measure — session history |
+| <kbd>Shift</kbd>+<kbd>B</kbd> | Blackout — the screen goes dark as though the device were off |
+| <kbd>Shift</kbd>+<kbd>W</kbd> | Whiteout — the screen becomes a lamp |
+| <kbd>Alt</kbd>+<kbd>K</kbd> | Stop settling in |
+| <kbd>Esc</kbd> | Leave a screen, then a panel, then decline the offer |
 
-## 5. Audio format & hosting decisions
+Arrow keys arm rather than move because a stray arrow press costs a 2.5 s crossfade and a settle tick. Scrolling or clicking the mode bar are unambiguous gestures and act immediately; a key that is one stray finger away while reading is not, so it asks twice. Once armed, single presses keep stepping until you stop for a couple of seconds.
 
-- **FLAC as lossless master** (user wears wired headphones). WAV/other acceptable if better suited; agent may decide.
-- MP3 avoided for looping (encoder padding gap/click). OGG/FLAC/WAV loop gaplessly.
-- Web player: stream separate files, overlap two players for crossfades; never load a 90-min session into RAM.
-- Long FLACs exceed comfortable GitHub limits → keep code in GitHub; large audio via GitHub Releases (uploaded from the user's machine), Vercel Blob, or Dropbox public links (user suggested; not yet decided), or deterministic on-demand generation.
-- Chat delivery limit observed: keep per-attachment files under ~10 MB (split losslessly into standalone valid FLAC parts of ~100 s).
-- Future goal: 90-minute files (user asked for these eventually; hours-long generation is feasible via chunked synthesis).
+The mode bar also responds to the mouse wheel and to direct clicks.
 
-## 6. How to continue in a new chat
+## Measurement
 
-1. Read this README and `PROJECT_STATUS.md`.
-2. Get the user's per-mode listening notes (Focus feedback already captured above).
-3. Lock the v2 sound plan; regenerate v2 audio (the v1 files were lost with the old session — regenerate if reference is needed).
-4. Get the Teja TEDx GitHub repo URL - "https://github.com/TJ-zip/Teja-For-TedX" then design the Three.js interface.
-5. Build the app in a proper (new) repo, targeting Vercel; decide audio hosting.
+Listening time is tracked per mode and stored in `localStorage`. It can be exported as CSV, and recording can be switched off entirely from the Measure pane.
 
-## 7. Repo contents
+Time is taken from `performance.now()` rather than the audio clock, because the audio clock does not exist while paused — what is being measured is wall-clock listening, not synthesis time. Sessions are written at every point one might not survive to be written later: on pause, on `visibilitychange`, on `pagehide` and on unmount.
 
-- `README.md` — this handoff document.
-- `PROJECT_STATUS.md` — persistent project memory.
+### Stored keys
+
+| Key | Holds |
+|---|---|
+| `focii.sessions` | Session history |
+| `focii.recording` | Whether history is being recorded |
+| `focii.started` | Whether a session has ever been started on this device |
+| `focii.hints` | Whether the onboarding hints have been seen |
+
+These were `soundscape.*` before the rename. Values are migrated on first load by **copying, not moving** — the legacy keys survive one release so that a rollback loses nothing — and an existing new key is never overwritten. Clearing history removes both spellings, because otherwise the migration would copy the cleared history back on the next load.
+
+None of this leaves the browser. There is no server, and therefore no backup.
+
+## Development
+
+```bash
+npm install
+npm run dev        # http://localhost:3000
+npm run typecheck  # tsc --noEmit
+npm run build      # production build
+```
+
+`typecheck` and `build` are the only checks that exist; there is no lint or test script yet. Both run in CI on every push and pull request via `.github/workflows/validate.yml`.
+
+## Repository layout
+
+```
+src/
+  app/          layout, page, globals.css
+  audio/        engine.ts (synthesis), presets.ts (per-mode voicing, section timings)
+  components/   Visualizer, SessionClock, ModeDot, SkipPrompt, Blackout,
+                CommandCenter, MeasurePane, Philosophy, Wordmark
+  lib/          sessions.ts (history, CSV), storage.ts (keys, migration)
+generator/      offline Python experiments; not part of the build
+```
+
+## Deployment
+
+Pushed to Vercel from `main`. Pull requests get preview deployments. There is nothing to configure — no environment variables, no build overrides, no external services.
+
+## Design rules
+
+- Near-black background, restrained deep red. **No squares or squircles anywhere.**
+- No dashboards, no bright UI, nothing that explains the mechanism while the mechanism is running.
+- Reduced motion is respected throughout.
+- Anything the app says to a sighted user, it also says to a screen reader — through polite live regions, never assertive ones, because these are confirmations rather than interruptions.
