@@ -45,6 +45,12 @@
  *    be expressible as a constructor option -- it cannot live only in a
  *    scheduled node, because scheduled nodes die with the context. `settleIn`
  *    exists for exactly that reason.
+ *
+ * 7. SESSION POSITION IS A NUMBER, NOT A CLOCK. `phase` is the session offset
+ *    a layer started at, and everything structural is derived from it rather
+ *    than from wall time. That is what makes both resuming a paused session
+ *    and fastForward() possible without rebuilding anything: move the number
+ *    and the structure moves with it.
  */
 
 import {
@@ -80,6 +86,17 @@ const DISPOSE_MARGIN = 0.25;
  * lengthen the other. The tick now sounds 1.5s after the crossfade completes.
  */
 const TICK_DELAY = 4.0;
+
+/**
+ * How long the intensity takes to catch up after a fastForward, in seconds.
+ *
+ * A fast-forward can move the section intensity by 0.45 in one instant. Left
+ * to updateIntensity's ordinary 250ms ramp that is a step, and a step in
+ * broadband level is the one thing this engine exists to avoid. 2.5s is the
+ * same figure as MODE_FADE, for the same reason: it is about as fast as a
+ * whole-mix level change can move without announcing itself.
+ */
+const FF_GLIDE = 2.5;
 
 /**
  * Public name for the same number.
@@ -232,6 +249,11 @@ interface Layer {
   /** Session offset at startTime, so a session can be resumed mid-structure. */
   phase: number;
   intensityGain: GainNode;
+  /**
+   * Audio-clock time until which a fastForward glide owns `intensityGain`.
+   * 0 means nobody owns it and the scheduler may ramp normally.
+   */
+  glideUntil: number;
   stopping: boolean;
 }
 
@@ -419,6 +441,77 @@ export class SoundscapeEngine {
     // transition artefact. Scheduling it here also cancels any tick still
     // pending from a mode change the user scrolled straight past.
     this.scheduleSettleTick(now + TICK_DELAY, mode);
+  }
+
+  /**
+   * Jump the session forward to a later offset without restarting anything.
+   *
+   * Used to skip the settling-in period: the 180s Initiation section exists to
+   * let a session arrive gradually, and sometimes the listener has already
+   * arrived. Returns the number of seconds actually skipped, or 0 if the
+   * session is not running or is already at or past `toPhase`.
+   *
+   * What makes this safe to do mid-flight:
+   *
+   * - NOTHING IS REBUILT. Oscillators, the noise bed, the pad PRNG and the
+   *   seed all keep running. This is not a seek; the sound does not restart,
+   *   it is the same sound with a later structural position. That is also why
+   *   it survives a later pause for free -- the UI carries `elapsed` into the
+   *   resumed engine's phase, and `elapsed` already includes the jump.
+   *
+   * - THE BEAT GRID IS PRESERVED, NOT SHIFTED. A pulse sounds at absolute time
+   *   `startTime - phase + k * beat`. Raising `phase` by delta therefore pulls
+   *   the entire grid delta seconds EARLIER. If delta is a whole number of
+   *   beats the grid lands exactly on itself and only the beat indices move,
+   *   so `nextBeat` is re-indexed by delta/beat and no beat inside the 1.5s
+   *   lookahead is dropped or played twice. Delta is rounded UP rather than to
+   *   nearest, so the jump always reaches the target -- rounding down by half
+   *   a beat would leave the session 0.3s short of actually leaving Initiation.
+   *
+   * - PADS ARE UNAFFECTED BY DESIGN. `padCursor` lives on the audio clock, not
+   *   the session clock, so pads already in flight keep sounding and the next
+   *   inter-arrival gap is drawn as usual. Pad density does not depend on
+   *   section, so there is nothing to correct.
+   *
+   * The one visible seam: pulses already scheduled inside the lookahead carry
+   * the intensity they were baked with, for up to 1.5s. Against a 2.5s glide
+   * that is not perceptible.
+   */
+  fastForward(toPhase: number): number {
+    const ctx = this.ctx;
+    if (!ctx || !this.running || !Number.isFinite(toPhase)) return 0;
+    const current = this.elapsed;
+    if (toPhase <= current) return 0;
+
+    const now = ctx.currentTime;
+    let delta = toPhase - current;
+
+    // Snap against the mode that is actually sounding. A crossfading-out layer
+    // is skipped below anyway, so its tempo must not get a vote here.
+    const head = this.layers[this.layers.length - 1];
+    const headBpm = head?.preset.bpm ?? 0;
+    if (headBpm > 0) {
+      const beat = 60 / headBpm;
+      delta = Math.ceil(delta / beat) * beat;
+    }
+    if (delta <= 0) return 0;
+
+    for (const layer of this.layers) {
+      if (layer.stopping) continue;
+      layer.phase += delta;
+
+      const beat = layer.preset.bpm > 0 ? 60 / layer.preset.bpm : 0;
+      if (beat > 0) layer.nextBeat += Math.round(delta / beat);
+
+      const target = sectionAt(now - layer.startTime + layer.phase).intensity;
+      const g = layer.intensityGain.gain;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(g.value, now);
+      g.linearRampToValueAtTime(target, now + FF_GLIDE);
+      layer.glideUntil = now + FF_GLIDE;
+    }
+
+    return delta;
   }
 
   stop(): void {
@@ -655,6 +748,7 @@ export class SoundscapeEngine {
       startTime: now,
       phase,
       intensityGain,
+      glideUntil: 0,
       stopping: false,
     };
   }
@@ -689,6 +783,11 @@ export class SoundscapeEngine {
   private updateIntensity(layer: Layer): void {
     const ctx = this.ctx!;
     const now = ctx.currentTime;
+    // A fastForward glide owns this param until it lands. Two ramps on one
+    // AudioParam do not blend, they fight: this 250ms ramp would restart from
+    // wherever the glide currently is and re-target the same value four times
+    // a second, flattening a 2.5s curve into a staircase.
+    if (now < layer.glideUntil) return;
     const target = sectionAt(now - layer.startTime + layer.phase).intensity;
     // Ramp over one scheduler period so the 0.25 s staircase is inaudible.
     layer.intensityGain.gain.linearRampToValueAtTime(
