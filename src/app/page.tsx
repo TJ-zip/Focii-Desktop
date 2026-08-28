@@ -12,7 +12,11 @@ import CommandCenter from "../components/CommandCenter";
 import MeasurePane from "../components/MeasurePane";
 import Philosophy from "../components/Philosophy";
 import ModeDot, { type ArmState, type HintScope } from "../components/ModeDot";
-import SkipPrompt, { SKIP_WINDOWS } from "../components/SkipPrompt";
+import SkipPrompt, {
+  SKIP_AT_SHIFT,
+  SKIP_AT_START,
+  SKIP_HOLD,
+} from "../components/SkipPrompt";
 import Blackout, { type Screen } from "../components/Blackout";
 import SessionClock, {
   easeInOutCubic,
@@ -231,8 +235,20 @@ export default function Home() {
    */
   const screenRef = useRef<Screen | null>(null);
 
-  /** Whether the stop-settling-in prompt is currently being offered. */
+  /** Whether the stop-settling-in offer is currently on screen. */
   const [skipOpen, setSkipOpen] = useState(false);
+  /**
+   * What the offer window is measuring from.
+   *
+   * The window effect has to know whether it woke up because the mode
+   * changed or because the session started, and its dependency list cannot
+   * tell it: [mode, playing] fires identically for both. So the previous
+   * values are kept explicitly. Refs rather than state, because they are
+   * written during the same effect that reads them and must not cause a
+   * render of their own.
+   */
+  const skipPrevMode = useRef<Mode>("focus");
+  const skipPrevPlaying = useRef(false);
 
   /**
    * Text for the polite live region.
@@ -614,49 +630,112 @@ export default function Home() {
   // --- stop settling in ---------------------------------------------------
 
   /**
-   * Take the offer: jump the session to the end of Initiation.
+   * Take the offer.
    *
-   * The engine does the work and reports how far it actually moved, which is
-   * rounded up to a whole beat so a pulsed mode lands on the grid rather than
-   * a fraction of a beat short of it. Zero means there was nothing to skip -
-   * the session was already past the ramp - and in that case the readout is
-   * left alone rather than being rewritten with the same number.
+   * There are two settlings, and this ends both.
    *
-   * The clock is re-read immediately instead of waiting for the once-a-second
-   * interval, because the sound changes now and a readout that agrees with it
-   * a beat later reads as a bug.
+   * The session's own: Initiation, 180 seconds of climbing intensity. The
+   * engine does that work and reports how far it actually moved, rounded up
+   * to a whole beat so a pulsed mode lands on the grid rather than a fraction
+   * of a beat short of it. Zero means there was nothing to skip.
+   *
+   * The mode's: the red split clock counting out a settling window after a
+   * mode change. That one is a display rather than a sound, but the feature
+   * is called "stop settling in", and leaving a clock visibly counting
+   * settling time after the user has said they are done settling would be the
+   * app contradicting itself. It is folded away through the ordinary summing
+   * stage, so it merges rather than vanishing.
+   *
+   * Doing neither is silent. This is reachable from a key chord at any time,
+   * including times when there is nothing to do, and a chord that announces
+   * "nothing happened" is worse than one that does nothing.
+   *
+   * The session clock is re-read immediately instead of waiting for the
+   * once-a-second interval, because the sound changes now and a readout that
+   * agrees with it a beat later reads as a bug.
    */
   const skipSettling = useCallback(() => {
     setSkipOpen(false);
     const engine = engineRef.current;
     if (!engine || !engine.running) return;
-    if (engine.fastForward(SETTLE_SECONDS) <= 0) return;
-    const at = engine.elapsed;
-    setSession({ name: sectionAt(at).name, elapsed: at });
-    setAnnounce("Settling in skipped. The session continues at full depth.");
+
+    const jumped =
+      engine.elapsed < SETTLE_SECONDS ? engine.fastForward(SETTLE_SECONDS) : 0;
+    if (jumped > 0) {
+      const at = engine.elapsed;
+      setSession({ name: sectionAt(at).name, elapsed: at });
+    }
+
+    // Read the mirror, not the state: this runs from a key handler that
+    // cannot depend on `split` without being re-bound on every tick of it.
+    const s = splitRef.current;
+    const folding = s !== null && s.stage === "settling";
+    if (folding) {
+      setSplit((cur) => {
+        if (!cur || cur.stage !== "settling") return cur;
+        // Keep the real number rather than jumping the red clock to 3:00.
+        // It did not settle for three minutes; it settled for as long as it
+        // settled, and then was stopped.
+        const m =
+          cur.settleStart !== null
+            ? (performance.now() - cur.settleStart) / 1000
+            : cur.modeElapsed;
+        return { ...cur, stage: "summing", modeElapsed: m };
+      });
+    }
+
+    if (jumped <= 0 && !folding) return;
+    setAnnounce(
+      jumped > 0
+        ? "Settling in skipped. The session continues at full depth."
+        : "Settling window ended."
+    );
   }, []);
 
   /**
    * The offer window.
    *
-   * Keyed on [mode, playing], which is what makes it restart on every mode
-   * change and on every resume rather than only once per session - see the
-   * note in SkipPrompt.tsx for why that is the right unit. The engine is
-   * re-checked at the moment the prompt would appear rather than when the
-   * timer is set, because a session can cross out of Initiation, or be
-   * paused, during the few seconds in between.
+   * Two situations, one number each. A beginning gets SKIP_AT_START; a mode
+   * shift gets the longer SKIP_AT_SHIFT, because a shift already has a
+   * crossfade, a settle tick and a rolling red clock happening in the same
+   * place. Both hold for SKIP_HOLD. See SkipPrompt.tsx for why these are two
+   * constants rather than eight.
+   *
+   * [mode, playing] cannot distinguish the two on its own - it fires the same
+   * way for a mode change, a resume, and a mode change made while paused and
+   * then resumed - so the previous values are compared explicitly.
+   *
+   * THE GUARD. This is checked when the offer would appear rather than when
+   * the timer is set, because a session can cross out of Initiation, or be
+   * paused, during the few seconds in between. It used to be `elapsed >=
+   * SETTLE_SECONDS -> nothing to skip`, and that was the bug: taking the
+   * offer fast-forwards past SETTLE_SECONDS, which makes that test true for
+   * the rest of the session, so the offer never appeared again no matter how
+   * many times the mode changed. A mode shift opens a settling window of its
+   * own, and that window is a real thing to be offered out of, so it counts.
    */
   useEffect(() => {
+    const shifted = skipPrevMode.current !== mode;
+    const resumed = !skipPrevPlaying.current && playing;
+    skipPrevMode.current = mode;
+    skipPrevPlaying.current = playing;
+
     setSkipOpen(false);
     if (!playing) return;
-    const w = SKIP_WINDOWS[mode];
+
+    const at = shifted && !resumed ? SKIP_AT_SHIFT : SKIP_AT_START;
     const show = window.setTimeout(() => {
       const engine = engineRef.current;
       if (!engine || !engine.running) return;
-      if (engine.elapsed >= SETTLE_SECONDS) return; // nothing left to skip
+      const s = splitRef.current;
+      const settling = s !== null && s.stage === "settling";
+      if (engine.elapsed >= SETTLE_SECONDS && !settling) return;
       setSkipOpen(true);
-    }, w.at * 1000);
-    const hide = window.setTimeout(() => setSkipOpen(false), w.until * 1000);
+    }, at * 1000);
+    const hide = window.setTimeout(
+      () => setSkipOpen(false),
+      (at + SKIP_HOLD) * 1000
+    );
     return () => {
       window.clearTimeout(show);
       window.clearTimeout(hide);
@@ -939,6 +1018,30 @@ export default function Home() {
   // shift state.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Alt + K: take the stop-settling-in offer.
+      //
+      // Deliberately punched through the alt bail immediately below. The
+      // visible offer lives for eight seconds and the decision behind it does
+      // not - "I do not need to ease into this" is just as true ninety
+      // seconds later - so there has to be a way to say it that does not
+      // depend on having caught the word before it withdrew.
+      //
+      // It is also above the dialog and screen guards, unlike every other
+      // key: those guard things you look at, and this is a thing you hear.
+      // The session is running behind the command centre and behind a
+      // blackout, and so is Initiation.
+      //
+      // Alt+K on macOS types a character. preventDefault stops that. There
+      // are no text fields in the app, but the typing check runs first
+      // anyway, for the same reason it does for Space.
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyK") {
+        if (isTypingTarget(e.target)) return;
+        e.preventDefault();
+        if (e.repeat) return;
+        skipSettling();
+        return;
+      }
+
       // Leave browser and OS chords alone.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (isTypingTarget(e.target)) return;
@@ -1063,6 +1166,7 @@ export default function Home() {
     pauseAudio,
     scrollTo,
     skipOpen,
+    skipSettling,
     startAudio,
     toggleScreen,
   ]);
@@ -1183,19 +1287,21 @@ export default function Home() {
       />
 
       <div className="hud">
+        {/* The mode name and the offer are one line, rendered by one
+            component, so the pair re-centres as the red word opens instead
+            of the name sitting still while something grows off its right.
+            Closed behind a screen, which also takes it out of the tab order
+            rather than leaving an invisible button to land on. */}
         <p className="session">
-          <strong>{active.label}</strong>
+          <strong>
+            <SkipPrompt
+              mode={mode}
+              label={active.label}
+              open={skipOpen && screen === null}
+              onSkip={skipSettling}
+            />
+          </strong>
         </p>
-
-        {/* Between the mode name and the clock, in a zero-height slot so its
-            arrival cannot push the rest of the readout down the page. Hidden
-            behind a screen, which also takes it out of the tab order rather
-            than leaving an invisible button to land on. */}
-        <SkipPrompt
-          mode={mode}
-          open={skipOpen && screen === null}
-          onSkip={skipSettling}
-        />
 
         <SessionClock
           label={session.name}
