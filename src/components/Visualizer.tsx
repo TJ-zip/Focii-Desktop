@@ -1,8 +1,28 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { PRESETS } from "../audio/presets";
 
 export type VisualMode = "focus" | "relax" | "sleep" | "pump";
+
+/* ------------------------------------------------------------------ */
+/* Tempo                                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Seconds per beat, with a fallback for a preset that has no pulse.
+ *
+ * Only focus and pump have a bpm; relax and sleep are 0 by design and use
+ * plain seconds below. The fallback exists so that removing a mode's pulse
+ * can never turn a period into Infinity and freeze the animation - it would
+ * simply revert that mode to free-running time.
+ */
+function beat(bpm: number, fallback: number): number {
+  return bpm > 0 ? 60 / bpm : fallback;
+}
+
+const FOCUS_BEAT = beat(PRESETS.focus.bpm, 1); // 60.1 bpm -> 0.9983 s
+const PUMP_BEAT = beat(PRESETS.pump.bpm, 0.5); // 122.0 bpm -> 0.4918 s
 
 /* ------------------------------------------------------------------ */
 /* Mode character                                                      */
@@ -22,17 +42,39 @@ interface ModeParams {
   drift: number; // sub-pixel breathing drift of the whole field
 }
 
+/**
+ * The pulsed modes state their periods in BEATS of their own preset rather
+ * than in seconds, for the same reason quantizeRoot() exists in presets.ts:
+ * two cycles that are close but not commensurate do not look independent,
+ * they look like one cycle with a fault in it. A 7.5 s breath against a
+ * 0.9983 s beat completes 7.51 beats, so its peak lands at a different point
+ * in the bar every time round and slowly walks the whole way through - which
+ * reads as the picture lagging the music and then catching up.
+ *
+ * Both were also asked to move faster, so the beat counts were chosen below
+ * the old free-running value rather than at the nearest one:
+ *
+ *   focus  7.5 s -> 6 beats  = 5.99 s   (1.25x)
+ *   pump   5.5 s -> 8 beats  = 3.93 s   (1.40x)
+ *
+ * Rounding to the NEAREST whole beat would have given focus 8 beats, i.e.
+ * slower, which is the opposite of what was wanted.
+ *
+ * relax and sleep have bpm 0 - no pulse layer at all - so they keep literal
+ * seconds. There is no grid for them to be off, and inventing one would make
+ * two modes whose whole point is that nothing is counting feel counted.
+ */
 const PARAMS: Record<VisualMode, ModeParams> = {
   focus: {
-    breath: 7.5,
-    spawnMin: 0.6,
-    spawnMax: 1.6,
+    breath: 6 * FOCUS_BEAT, // 5.99 s
+    spawnMin: 0.5 * FOCUS_BEAT, // 0.50 s
+    spawnMax: 1.5 * FOCUS_BEAT, // 1.50 s
     maxGlyphs: 17,
     lifeMin: 4,
     lifeMax: 8,
     brightness: 1,
     redBias: 0.2,
-    frameEvery: 20,
+    frameEvery: 16 * FOCUS_BEAT, // 15.97 s
     gridAlpha: 0.05,
     drift: 2.5,
   },
@@ -63,15 +105,15 @@ const PARAMS: Record<VisualMode, ModeParams> = {
     drift: 1,
   },
   pump: {
-    breath: 5.5,
-    spawnMin: 0.45,
-    spawnMax: 1.3,
+    breath: 8 * PUMP_BEAT, // 3.93 s
+    spawnMin: 0.5 * PUMP_BEAT, // 0.25 s
+    spawnMax: 2 * PUMP_BEAT, // 0.98 s
     maxGlyphs: 20,
     lifeMin: 3,
     lifeMax: 7,
     brightness: 1.25,
     redBias: 0.55,
-    frameEvery: 15,
+    frameEvery: 24 * PUMP_BEAT, // 11.80 s
     gridAlpha: 0.13,
     drift: 4,
   },
