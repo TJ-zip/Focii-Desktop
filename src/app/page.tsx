@@ -96,6 +96,24 @@ const DEAD_SPACE_WINDOW = 1600;
 const DEAD_SPACE_TRIGGER = 2;
 
 /**
+ * The recall flash.
+ *
+ * The dot answers one question - "how do I pause" - and it answers it
+ * forever. What it can no longer answer, once its tail has retired, is the
+ * larger question underneath a user who keeps pressing anyway: is this all
+ * there is? That answer lives in the command centre, so the corner where the
+ * command centre lives briefly says so itself.
+ *
+ * TIP_DELAY is measured from the moment the blob opens, and lands while line
+ * one is still up (it holds 3.2 s). The two are meant to read as one gesture:
+ * the app answers the question asked, then points at where the rest of the
+ * answers are. Leading with the pointer, or showing it alone, would be
+ * answering a question that was not asked.
+ */
+const TIP_DELAY = 1500;
+const TIP_HOLD = 2400;
+
+/**
  * The in-flight session.
  *
  * `since` is a performance.now() stamp for the span currently running, or
@@ -224,6 +242,8 @@ export default function Home() {
   const hintRunRef = useRef(0);
   const hintsSeenRef = useRef(false);
   const deadSpace = useRef({ n: 0, at: 0 });
+  /** The Command tip, opened by the app rather than by a pointer. */
+  const [tipFlash, setTipFlash] = useState(false);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -254,6 +274,29 @@ export default function Home() {
     recordingRef.current = rec;
     setRecordingState(rec);
   }, []);
+
+  /**
+   * Open the Command tip a beat into the blob, then close it.
+   *
+   * Gated on `hintsSeenRef` rather than on `hintScope`, deliberately: a
+   * first-time sequence ENDS on "Press Shift + C", so flashing the corner at
+   * the same time would be the app saying one thing in two places. Reading
+   * the ref also means the scope flipping to "short" as that first sequence
+   * finishes cannot retro-fire a flash for the run that just taught it.
+   */
+  useEffect(() => {
+    if (hintRun === 0 || !hintsSeenRef.current) return;
+    const on = window.setTimeout(() => setTipFlash(true), TIP_DELAY);
+    const off = window.setTimeout(
+      () => setTipFlash(false),
+      TIP_DELAY + TIP_HOLD
+    );
+    return () => {
+      window.clearTimeout(on);
+      window.clearTimeout(off);
+      setTipFlash(false);
+    };
+  }, [hintRun]);
 
   // --- measurement --------------------------------------------------------
 
@@ -911,11 +954,15 @@ export default function Home() {
       <span className="wordmark">Soundscape</span>
 
       {/* Borderless, top-right. Hover or keyboard focus reveals the chord, so
-          the shortcut is discoverable without the label shouting it. */}
+          the shortcut is discoverable without the label shouting it.
+          `data-flash` is the app opening the same tip on its own behalf; it
+          is styled identically to hover, because it is meant to look like
+          the corner answering rather than like a new kind of notice. */}
       <div className="cmdcorner">
         <button
           type="button"
           className="cmdbtn"
+          data-flash={tipFlash ? "true" : "false"}
           onClick={() => (commandOpen ? closeAll() : openCommand())}
           aria-haspopup="dialog"
           aria-expanded={commandOpen}

@@ -144,6 +144,22 @@ main {
   transform: translateY(0);
 }
 
+/* The recall flash: the app opening its own tip, after the dot has answered
+   a repeated space press and has nothing further to add. Deliberately
+   identical to the hover state - it should read as the same corner saying
+   the same thing, not as a new kind of notification. The word brightens
+   with it, because a blob pointing at a dim label looks like it is pointing
+   at nothing. Declared after the hover rules so it wins any tie. */
+.cmdbtn[data-flash="true"] {
+  color: var(--fg);
+  text-shadow: 0 0 16px rgba(177, 18, 27, 0.75);
+}
+
+.cmdbtn[data-flash="true"] .cmdtip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 /* --- command centre ----------------------------------------------------- */
 .cmdscrim {
   position: fixed;
