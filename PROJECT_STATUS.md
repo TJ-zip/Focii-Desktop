@@ -20,6 +20,7 @@ Personal Endel-inspired generative soundscape app. Four modes: Focus, Relax, Sle
 - **Mode selector: horizontally scrollable snap bar** (replaced the 4 circular buttons). Scroll/swipe/wheel/click/keyboard; the label nearest centre becomes active. Circular red dot marks the selection point. Item centres measured via `getBoundingClientRect` relative to the track — NOT `offsetLeft`, which was measured against a positioned ancestor and skewed selection one item left. Wheel steps one mode per gesture (non-passive listener, accumulation threshold 24, cooldown 280 ms). `prefers-reduced-motion` honoured.
 - **Panels are mutually exclusive.** Command centre, measurement pane and Philosophy each close the others rather than stacking: two dialogs would mean two focus traps fighting and an Escape whose meaning depends on which one won. Philosophy is reached from *inside* the command centre and **replaces** it, so closing Philosophy returns there rather than dumping the reader onto a bare session.
 - **The wordmark is a component, not a string** (`src/components/Wordmark.tsx`, PR #20). The stylised capital F is inline SVG — three cubic-Bézier paths in `currentColor`, so it inherits colour and scales in `em` — followed by "ocii" with the second `i` in `--red-text`. The approved artwork was 88 KB of dense polygon outlines; each contour was simplified by Ramer–Douglas–Peucker and re-smoothed by converting the surviving points to cubic Béziers through the closed-form Catmull-Rom identity, giving **3.2 KB**. Equivalence was checked by rasterising the compacted paths and comparing against the approved bitmap, not by eye. An inline SVG rests its *bottom edge* on the text baseline, so the mark is pushed down by (750−465)/750 = **0.38 × its rendered height** to sit on the same baseline as the letters.
+- **A swash sets the advance width, not the optical one.** The F is followed by `margin-right: var(--mark-kern)` = **−1.15em**, and the negative value is correct rather than a hack. The glyph's box is as wide as its widest ink, which is the top flourish at x=832 of an 888 unit box; but that flourish lives entirely above the x-height. Measured row by row, the F's ink at the band "ocii" actually occupies (y 265..465) stops at x=477. Left alone the letters clear a stroke nowhere near them, wasting 46 % of the mark's width — about 1.3em of dead air. Pulling them back lets them tuck under the flourish, which is what the glyph was drawn to allow, and the maths is written out in `Wordmark.module.css`. There is no collision and nothing is clipped: only the advance shrinks, the box still paints in full.
 - **New components ship a scoped CSS Module, not new global classnames** (`SkipPrompt.module.css`, `Blackout.module.css`, `Wordmark.module.css`). A deliberate break from the rest of the app's global-classname convention: `globals.css` is ~26 KB, the authoring tooling writes whole files, and a CSS typo passes CI in silence. The trade is two styling conventions in one codebase; the alternative was risking a 26 KB file on every component. `Wordmark.module.css` is applied to a **child** of the existing global `.wordmark` element rather than replacing that rule: `.wordmark` does positioning worth keeping, but its `letter-spacing: 0.5em` / `text-transform: uppercase` / `--fg-dim` typography would fight the new design. Splitting them means inherited values lose to direct declarations — no specificity race, no dependence on stylesheet load order.
 - **`src/lib/storage.ts` (PR #20)** owns every `localStorage` key name and the `soundscape.*` → `focii.*` migration. See Required environment variables for the rules.
 - Offline audio generators: `generator/gen_soundscapes.py` (v1, all modes) and `generator/gen_focus_v2_trained.py` (**Focus v2, trained**, seed 207).
@@ -40,6 +41,7 @@ Next.js 16.3.0, React 19, TypeScript 5.6, plain CSS + CSS Modules + Canvas 2D + 
 - **Philosophy page** (PR #15) — the classical-conditioning essay; the only long-form reading in the app and therefore the only place with a serif and a 1.9 line-height.
 - **Command recall flash** (PR #16) — someone who has seen the whole hint sequence and is still pressing Space is asking a question the dot can no longer answer. The Command tip opens itself for `TIP_HOLD` = 2400 ms, `TIP_DELAY` = 1500 ms into the blob. **Author-confirmed working (2026-08-28).**
 - **Visualizer tempo lock** (PR #17) — Focus and Pump quicker and beat-derived; Relax and Sleep unchanged. **Author-confirmed working (2026-08-28): "working and fully functional."**
+- **The Focii wordmark** (PR #20) — seen rendered in a browser and **author-approved (2026-08-28)** after the kern above was applied. The first render was approved for shape but rejected for spacing; the swash diagnosis and the −1.15em correction followed, and the result was accepted as "perfect". This is the only part of PR #20 that has been verified by eye.
 - Endel-style generative visualizer — **user verdict: "FANTABULOUS"** (PR #5 merged). Per-mode tuning v2 (PR #6 merged): sleep slower (30 s breath, sparse long-lived glyphs — user loved the dimming), pump with brighter grid lines (alpha 0.13) + brightness 1.25. Reduced-motion static fallback, DPR-aware, resize-safe.
 - Page scrolls again on short viewports: only the canvas is `position: fixed`; wordmark and HUD sit in normal flow (PR #6).
 - Scrollable mode bar (no buttons, no squares/squircles): scroll-snap, centre-select aligned to the red dot, mouse-wheel mode stepping, gradient edge fades, hidden scrollbar, keyboard accessible.
@@ -55,7 +57,7 @@ Everything below type-checks and builds on GitHub Actions and deploys to a Verce
   The mode name and the red word are a **flex row with `align-items: baseline`**, not an inline-block. An inline-level box with `overflow: hidden` — which the reveal needs, to grow from zero width — synthesises its baseline from its *bottom margin edge*, which would have dropped the red word a descender below the white one. Flex items keep their content baseline. `.rsplit` in `globals.css` survives the same pattern only because its parent is already a baseline flex row.
   **Two things about the first cut, which the author tried in the browser and rejected.** It was a red pill in the gap between the mode name and the clock, with per-mode windows (Focus 4→14 s, Relax 3→10 s, Sleep 2→15 s, Pump 1→15 s). And it never came back after being used once: the fire-time guard read `engine.elapsed >= SETTLE_SECONDS`, but taking the offer pushes `elapsed` past 180 permanently, so every later mode change re-ran the effect and was rejected by a condition that could never again be false. The guard now also passes while the split clock is in its settling stage — a mode change is its own settling window and is worth being offered out of, even in hour two of a session.
 - **Blackout and whiteout** (PR #19, merged) — Shift+B renders true `#000` so the machine looks switched off; Shift+W turns the panel into a lamp to work by. Audio continues through both. Black burns in from the left, white from the right, each as one oversized sheet whose leading 12 % is a gradient, so what crosses is a burn front rather than a wipe; the sheet is 112vw so the soft edge parks off-screen at rest (a lamp must not be dimmer at one side). Every 210 s one very low-contrast band crosses — 2.8 % darkening on white, 2.2 % lightening on black. A screen wake lock is requested where the browser has one. Exit: the same chord, Escape, or a double click; single clicks and pointer movement deliberately do nothing. Under `prefers-reduced-motion` the burn becomes a cross-fade and the sweep is dropped entirely, taking burn-in protection with it — the correct trade for someone who asked not to be moved.
-- **The Focii wordmark and the storage migration** (PR #20) — the F has been checked as a bitmap but never seen rendered in a browser at real size, in Cambria or in whatever the fallback serif turns out to be. The migration has never run against a populated `localStorage`.
+- **The storage migration** (PR #20) — has never run against a populated `localStorage`. The logic is tested only as written; the first real exercise of it is the author's own browser after this merges.
 
 ## Feedback captured
 - **Generative engine playback: "FANTABULOUS", "I can't stop listening."** Ran 10+ minutes without problems.
@@ -65,6 +67,7 @@ Everything below type-checks and builds on GitHub Actions and deploys to a Verce
 - Split timer, measurement pane, Philosophy: "all is working." Recall flash: "everything works perfect." Visualizer tempo: "working and fully functional."
 - **Stop-settling-in prompt, first cut (2026-08-28): rejected.** "It's not appearing after clicked once and changed modes." The placement and the pill shape were rejected with it; the redesign above is the author's own specification, down to the 4.5 / 7 / 8 s marks and the Alt+K chord.
 - **Name and wordmark (2026-08-28): approved.** "Focii", meaning multiple modes of focus. The F is a bolder cut of the cursive reference; an earlier three-slash version was rejected by the author as his own misdirection. The remaining letters are Cambria, matching the app.
+- **Wordmark spacing (2026-08-28): rejected, then approved.** Seen rendered for the first time on the PR #20 preview, the gap between the F and "ocii" was called out as too wide. After the −1.15em kern: "everything is perfect now."
 - Sleep audio v1.1: outstanding — do not change.
 - Relax audio v1.1: failed — user couldn't relax. Await reference tracks.
 - Pump audio v1.1: nice but mediocre — likely flat energy curve. Await reference tracks.
@@ -72,17 +75,15 @@ Everything below type-checks and builds on GitHub Actions and deploys to a Verce
 - Mode bar (2026-08-20 screen recording): active mode was the label LEFT of the red dot, and the bar was click-only → both fixed (dot alignment + wheel scrolling).
 
 ## Current task
-**Rename the project to Focii** — PR #20, branch `refactor/rename-focii`, open against `main`.
+**None open.** The rename to Focii (PR #20) is merged; `main` carries the Focii name, the wordmark and the storage migration.
 
-PRs #18 (`engine_ref.py` + `measure.yml`) and #19 (stop-settling-in offer, blackout / whiteout) are **merged**; `main` is at `8d97c32`.
+PRs #18 (`engine_ref.py` + `measure.yml`), #19 (stop-settling-in offer, blackout / whiteout) and #20 (rename) are all **merged**.
 
-| PR | Branch | Contents | Status |
-|---|---|---|---|
-| #20 | `refactor/rename-focii` | Wordmark component, `FociiEngine`, `localStorage` migration, docs | open |
+The next piece of work is verification rather than construction: PR #19 has still never been experienced, and the storage migration has still never run against real data.
 
 ## Pending tasks
 1. Hear and see PR #19 in a browser: the fast-forward; the redesigned offer — its reveal animation, the 4.5 s and 7.0 s marks, the 8 s withdrawal, Alt+K, and above all that **it returns after a mode change once it has already been used**; both burn directions; the 210 s band; the wake lock.
-2. See the Focii wordmark rendered, and run the storage migration against a browser that has real session history in it.
+2. Run the storage migration against a browser that has real session history in it, and confirm the history survives. The wordmark half of this item is done.
 3. Rename the GitHub repository and the Vercel project. Owner-only; not doable from here.
 4. Receive + profile reference tracks; regenerate Relax/Pump.
 5. Confirm `TICK_GAIN` = 0.07 by ear. The approved take was 0.1; 0.07 has never been heard.
@@ -108,11 +109,12 @@ Six measurement bugs were caught by `--selftest` and must not be "simplified" aw
 
 ## Known issues
 - **PR #19 has not been experienced.** No browser exists in the authoring environment. Everything in "Built, CI-green, not yet heard or seen" is unverified in the only way that counts.
-- **The wordmark has never been rendered.** Cambria is not installed in the authoring sandbox and there is no SVG rasteriser for the component as it will actually be laid out. The baseline offset (0.38 × height) is derived from the artwork's own geometry, not observed.
+- **The wordmark's kern is eye-approved, not responsive-tested.** `--mark-kern` = −1.15em was confirmed at desktop size; the 480 px breakpoint drops `.lockup` to 0.95 rem and the kern scales with it, but that narrower case has not been looked at. The value is a single custom property for exactly this reason.
 - **Alt+K is live behind a blackout and behind open dialogs.** Deliberate — the chord exists precisely for the case where the visible word is long gone, and a blackout is a plausible place to decide you want the ramp over with. Not yet confirmed with the author; noted in a comment at the handler.
 - `max-width: 8em` on the skip prompt's clipping wrapper is an estimate sized for "HARDER?" at 0.95 rem with 0.2 em tracking. If it overshoots the real content width, the visible part of the reveal finishes slightly before the 950 ms transition does.
 - **The visualizer is rate-locked, not phase-locked.** The canvas clock starts at page load, not at the bar, so the visual and musical cycles share a period at a fixed but arbitrary offset. This is safe *only* because every visual is a smooth sine — nothing on screen flashes, so there is no sharp attack that could be seen to land in the wrong place. A visible per-beat accent would need real phase-lock to the AudioContext clock. Deliberately deferred; the Philosophy essay states the limit rather than overclaiming it.
 - ~~`generator/engine_ref.py` missing.~~ **Resolved in PR #18.**
+- ~~The wordmark has never been rendered.~~ **Resolved 2026-08-28** — seen and approved on the PR #20 preview.
 - ~~Spacebar starts playback but cannot stop it.~~ **Resolved in PR B.** Root cause: `disabled={starting}` on the transport button blurred the focused element when React applied the attribute, so focus fell to `<body>` and never returned. The button no longer exists and keys are bound on `window`.
 - **Pause is a structural resume, not a true pause.** `pauseAudio()` stores `engine.elapsed` and `startAudio()` passes it back as the engine's `phase`. The audio graph is torn down and rebuilt, so resuming costs the 1.2 s `EDGE_FADE` out/in and yields different pads. What is preserved is session position and the generative sequence (one `seedRef` per tab), not the exact sound.
 - `SkipPrompt.tsx` imports `type Mode` via the `@/audio/presets` alias; every other file in the repo uses relative imports. The alias is configured in `tsconfig.json` and compiles, but it is the only one, so the convention is now inconsistent.
@@ -123,7 +125,7 @@ Six measurement bugs were caught by `--selftest` and must not be "simplified" aw
 - Authoring sandbox: no ffmpeg/FLAC encoder, no pip installs, no network egress; binaries can't be pushed to GitHub. WAV used for delivery; FLAC mastering deferred. All build/lint/type claims must come from a GitHub Actions run.
 - Endel reference is AAC in MP4; without a decoder, analysis is bitstream-level (bit allocation, `global_gain`, window flags). This yields tempo/attack/dynamics/cycle features but not spectral timbre.
 - Browser coverage: playback confirmed in Firefox only. Chromium and WebKit unverified.
-- Three merged branches still exist — `feature/visualizer-tempo`, `feature/engine-ref`, `feature/session-control`. Deleting them was never authorised.
+- Four merged branches still exist — `feature/visualizer-tempo`, `feature/engine-ref`, `feature/session-control`, `refactor/rename-focii`. Deleting them was never authorised.
 
 ## Required environment variables
 - None. The app makes no network calls at runtime and needs no configuration to build or deploy.
@@ -144,6 +146,7 @@ Vercel: connected to repo (preset Next.js, defaults); preview deployments active
 ## Important architectural decisions
 - **The name is Focii** — multiple modes of focus. The second `i` is red, and it is the only coloured letter.
 - **Renaming a `localStorage` key is a data-migration problem, not a find-and-replace.** Copy, never move; never overwrite an existing new key; delete both spellings. See Required environment variables.
+- **A calligraphic swash is kerned with a negative margin on purpose.** See the architecture note on `--mark-kern`. The value looks like a hack and is not one: the flourish that sets the box width sits above the letters entirely, so the correction is geometry, not taste. Do not "tidy" it to zero.
 - Sleep generator seed 41 locked. Focus v2 trained seed 207 (canonical until user feedback).
 - Trained-parameter approach: measure reference recordings via bitstream analysis, synthesise original audio from measured parameters. No Endel audio is ever reproduced or committed.
 - **3→12→75 session structure applies to all modes** (Initiation plays once per session; 12 and 75 alternate forever).
@@ -161,7 +164,9 @@ Vercel: connected to repo (preset Next.js, defaults); preview deployments active
 - Session-recording is local-only and opt-out; it records session duration and per-mode duration, nothing else.
 
 ## Last completed change
-PR #20 (`refactor/rename-focii`) — the project became **Focii**. New `Wordmark` component carrying the approved stylised F as 3.2 KB of inline Bézier paths; `SoundscapeEngine` → `FociiEngine`; `package.json` name, document title and description, the mode bar's accessible name and the CSV export filename; and `src/lib/storage.ts`, which migrates the four `localStorage` keys from `soundscape.*` to `focii.*` without risking the only copy of the session history that exists anywhere.
+PR #20 (`refactor/rename-focii`), merged — the project became **Focii**. New `Wordmark` component carrying the approved stylised F as 3.2 KB of inline Bézier paths; `SoundscapeEngine` → `FociiEngine`; `package.json` name, document title and description, the mode bar's accessible name and the CSV export filename; and `src/lib/storage.ts`, which migrates the four `localStorage` keys from `soundscape.*` to `focii.*` without risking the only copy of the session history that exists anywhere.
+
+The last commit on the branch was a kern: seen rendered for the first time, the wordmark had roughly 1.3em of dead air between the F and "ocii", because the glyph's advance width is set by a swash that lives above the letters. `--mark-kern` = −1.15em closed it and the author approved the result.
 
 `README.md` was rewritten rather than patched: it still described the planning phase — prerendered FLAC files, a Three.js interface, "this repo holds documentation only" — none of which has been true since the app was built.
 
