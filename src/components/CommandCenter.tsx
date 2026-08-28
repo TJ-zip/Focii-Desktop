@@ -11,16 +11,21 @@ import { useDialogFocus } from "../lib/useDialogFocus";
  * it to "then" for a sequence: "SHIFT + C" and "LEFT then LEFT" are entirely
  * different instructions and the panel must not render them identically.
  *
- * `action` marks a row that goes somewhere rather than describing a key. Such
+ * `action` marks a row that DOES something rather than describing a key. Such
  * a row is rendered as a real <button>, because a list item with a click
  * handler is invisible to the keyboard and announced as nothing.
+ *
+ * Blackout and whiteout are listed as actions rather than as plain reference
+ * rows on purpose. Their chords require a Shift key, and a phone does not have
+ * one; a feature reachable only from a keyboard would be a feature missing
+ * from half the devices this app is meant to run on.
  */
 export interface Command {
   keys: string[];
   label: string;
   detail?: string;
   sep?: string;
-  action?: "philosophy";
+  action?: "philosophy" | "blackout" | "whiteout";
 }
 
 export const COMMANDS: Command[] = [
@@ -44,6 +49,13 @@ export const COMMANDS: Command[] = [
       "Press twice. The first arrow arms and does not move; the second moves, and further single presses keep moving while the dot glows. Scrolling or clicking the bar needs no such confirmation \u2014 you already reached for it.",
   },
   {
+    keys: ["Tab", "\u21B5"],
+    sep: "then",
+    label: "Stop settling in",
+    detail:
+      "A session opens with three minutes of easing in. If you are already where the mode is trying to take you, a short question appears under the mode name offering to skip the rest of it \u2014 Attack, Better, Easier, Harder, depending on the mode. It withdraws on its own if you ignore it, and returns whenever you change mode.",
+  },
+  {
     keys: ["Shift", "M"],
     label: "Measure",
     detail:
@@ -53,6 +65,20 @@ export const COMMANDS: Command[] = [
     keys: ["Shift", "C"],
     label: "Command centre",
     detail: "This panel.",
+  },
+  {
+    keys: ["Shift", "B"],
+    label: "Blackout",
+    action: "blackout",
+    detail:
+      "Hides everything behind true black, so the screen looks switched off. The session keeps playing. Press Shift + B again, or Escape, or double click, to come back.",
+  },
+  {
+    keys: ["Shift", "W"],
+    label: "Whiteout",
+    action: "whiteout",
+    detail:
+      "The same, in white \u2014 the screen as a lamp to read or work by. The display is kept awake where the browser allows it. Shift + W, Escape, or a double click returns.",
   },
   {
     keys: ["Esc"],
@@ -71,18 +97,28 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onOpenPhilosophy: () => void;
+  onBlackout: () => void;
+  onWhiteout: () => void;
 }
 
 export default function CommandCenter({
   open,
   onClose,
   onOpenPhilosophy,
+  onBlackout,
+  onWhiteout,
 }: Props) {
   const panelRef = useRef<HTMLDivElement | null>(null);
 
   useDialogFocus(open, panelRef);
 
   if (!open) return null;
+
+  const run = (action: NonNullable<Command["action"]>) => {
+    if (action === "philosophy") onOpenPhilosophy();
+    else if (action === "blackout") onBlackout();
+    else onWhiteout();
+  };
 
   const keysOf = (c: Command) => (
     <span className="cmdkeys">
@@ -128,14 +164,18 @@ export default function CommandCenter({
         </div>
 
         <ul className="cmdlist">
-          {COMMANDS.map((c) =>
-            c.action === "philosophy" ? (
+          {COMMANDS.map((c) => {
+            const action = c.action;
+            return action ? (
               <li key={c.label} className="cmdrow cmdrowgo">
                 <button
                   type="button"
                   className="cmdgo"
-                  onClick={onOpenPhilosophy}
-                  aria-haspopup="dialog"
+                  onClick={() => run(action)}
+                  // Only philosophy opens another dialog. Announcing the
+                  // screens as dialogs would promise a thing to come back
+                  // from, and a blackout is not that.
+                  aria-haspopup={action === "philosophy" ? "dialog" : undefined}
                 >
                   {keysOf(c)}
                   {textOf(c)}
@@ -146,8 +186,8 @@ export default function CommandCenter({
                 {keysOf(c)}
                 {textOf(c)}
               </li>
-            )
-          )}
+            );
+          })}
         </ul>
       </div>
     </div>
