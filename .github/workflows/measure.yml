@@ -1,4 +1,4 @@
-Name: measure
+name: measure
 
 # Runs the offline reference renderer and commits its numbers back to the
 # branch, so a claim about the engine's tempo or transients is a claim with a
@@ -96,13 +96,17 @@ jobs:
       - name: Commit the report back
         run: |
           set -euo pipefail
-          if git diff --quiet -- generator/measurements.md; then
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Stage BEFORE testing for changes. `git diff` does not see an
+          # untracked file, so on the first run -- when measurements.md does
+          # not exist in the tree yet -- a plain `git diff --quiet` reports
+          # "no changes" and the report is silently discarded.
+          git add generator/measurements.md
+          if git diff --cached --quiet -- generator/measurements.md; then
             echo "Measurements unchanged; nothing to commit."
             exit 0
           fi
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add generator/measurements.md
           # Commits made with GITHUB_TOKEN do not trigger workflows, which is
           # what stops this job from re-running itself forever.
           git commit -m "ci: engine measurements for ${GITHUB_SHA:0:7}"
