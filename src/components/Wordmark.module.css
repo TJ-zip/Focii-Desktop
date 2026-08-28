@@ -1,0 +1,60 @@
+/*
+  Typography for the wordmark.
+
+  These rules live on a child of .wordmark rather than on .wordmark itself.
+  The global rule sets an uppercase, wide-tracked, 0.7rem treatment for the
+  old text mark; declaring the replacement on the inner element means the
+  two never compete on specificity, and the outer class keeps doing the one
+  job it is still good at - placing the mark under the visualizer.
+*/
+
+.lockup {
+  display: inline-block;
+  /* Cambria first, as drawn. The rest of the stack is the same serif
+     fallback chain the philosophy panel uses, so a machine without
+     Cambria degrades to the face the app already trusts. */
+  font-family: Cambria, ui-serif, Georgia, "Iowan Old Style",
+    "Times New Roman", serif;
+  font-size: 1.05rem;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/*
+  The F is set as an inline image on the text baseline.
+
+  An inline SVG sits with its bottom edge on the baseline, but this glyph
+  descends well below it - the loop bottoms out at y=693 of a 750 unit box
+  while the baseline is at y=465. The shift is that difference over the box
+  height, 285/750 = 0.38, times the rendered height.
+*/
+.mark {
+  height: 2.4em;
+  width: auto;
+  vertical-align: -0.912em; /* 0.38 x 2.4em */
+  margin-right: 0.04em;
+  overflow: visible;
+}
+
+.rest {
+  /* No inherited uppercase: the mark reads "Focii", not "FOCII". */
+  text-transform: lowercase;
+}
+
+/*
+  The second i carries the accent. --red-text is the visualizer red adjusted
+  for legibility on the near-black background; --red itself is a fill colour
+  and goes muddy at this size.
+*/
+.accent {
+  color: var(--red-text);
+}
+
+@media (max-width: 480px) {
+  .lockup {
+    font-size: 0.95rem;
+  }
+}
