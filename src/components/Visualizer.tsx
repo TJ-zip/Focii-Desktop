@@ -447,10 +447,44 @@ function spawnFrame(
 /* Component                                                           */
 /* ------------------------------------------------------------------ */
 
-export default function Visualizer({ mode }: { mode: VisualMode }) {
+interface Props {
+  mode: VisualMode;
+  /**
+   * Stop animating entirely.
+   *
+   * Set while a blackout or whiteout screen is up. Without it this canvas goes
+   * on repainting the full viewport sixty times a second underneath an opaque
+   * sheet -- invisible, and for the study-lamp case actively harmful, since
+   * the entire point of that mode is to leave a device sitting there lit for
+   * an hour.
+   *
+   * Note the field is NOT reseeded on resume. The animation clock runs from
+   * page load, so glyphs that expired during the pause are simply gone when it
+   * restarts, exactly as if it had been running. The visualizer has always
+   * been rate-locked rather than phase-locked to the audio, so a discontinuity
+   * here has nothing to fall out of step with.
+   */
+  paused?: boolean;
+}
+
+export default function Visualizer({ mode, paused = false }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const modeRef = useRef<VisualMode>(mode);
   modeRef.current = mode;
+
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+
+  /**
+   * Handle on the running loop, published by the main effect.
+   *
+   * `paused` deliberately does not join the main effect's dependency array.
+   * That effect owns the canvas context, the field geometry, the glyph list
+   * and the PRNG; re-running it would tear all of that down and reseed a fresh
+   * field every time a screen is toggled, so leaving a blackout would show a
+   * visibly different composition from the one that entered it.
+   */
+  const controlRef = useRef<{ restart: () => void } | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -543,6 +577,9 @@ export default function Visualizer({ mode }: { mode: VisualMode }) {
 
     function startOrStop() {
       cancelAnimationFrame(raf);
+      // A pause outranks everything else, including a change of motion
+      // preference arriving while a screen is up.
+      if (pausedRef.current) return;
       if (mql.matches) {
         renderStatic();
       } else {
@@ -552,15 +589,24 @@ export default function Visualizer({ mode }: { mode: VisualMode }) {
 
     resize();
     startOrStop();
+    controlRef.current = { restart: startOrStop };
     window.addEventListener("resize", resize);
     mql.addEventListener("change", startOrStop);
 
     return () => {
       cancelAnimationFrame(raf);
+      controlRef.current = null;
       window.removeEventListener("resize", resize);
       mql.removeEventListener("change", startOrStop);
     };
   }, []);
+
+  // Runs after the effect above on mount, so the handle is always published
+  // by the time this reads it. startOrStop() consults pausedRef itself, so
+  // one call covers both directions.
+  useEffect(() => {
+    controlRef.current?.restart();
+  }, [paused]);
 
   return <canvas ref={canvasRef} className="viz" aria-hidden="true" />;
 }

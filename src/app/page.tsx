@@ -1,11 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import Visualizer, { type VisualMode } from "../components/Visualizer";
 import CommandCenter from "../components/CommandCenter";
 import MeasurePane from "../components/MeasurePane";
 import Philosophy from "../components/Philosophy";
 import ModeDot, { type ArmState, type HintScope } from "../components/ModeDot";
+import SkipPrompt, {
+  SKIP_AT_SHIFT,
+  SKIP_AT_START,
+  SKIP_HOLD,
+} from "../components/SkipPrompt";
+import Blackout, { type Screen } from "../components/Blackout";
 import SessionClock, {
   easeInOutCubic,
   type Split,
@@ -114,6 +126,25 @@ const TIP_DELAY = 1500;
 const TIP_HOLD = 2400;
 
 /**
+ * Visually hidden, still announced.
+ *
+ * Kept as an inline style rather than a global class because it is used in
+ * exactly one place, and globals.css is long enough that a class used once is
+ * a class nobody will remember is load-bearing.
+ */
+const SR_ONLY: CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  margin: -1,
+  padding: 0,
+  overflow: "hidden",
+  clipPath: "inset(50%)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
+
+/**
  * The in-flight session.
  *
  * `since` is a performance.now() stamp for the span currently running, or
@@ -147,6 +178,20 @@ function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
+/**
+ * True when a real, activatable control holds focus.
+ *
+ * The global handler swallows Space to stop the page scrolling, which had the
+ * side effect of making Space unable to press any button in the app - the
+ * browser's own "activate the focused button" behaviour never got to run. So
+ * Space steps aside when a button or link is focused, which is the only
+ * circumstance in which the browser would have done something useful with it.
+ */
+function isActivatable(el: Element | null): boolean {
+  const tag = (el as HTMLElement | null)?.tagName?.toUpperCase();
+  return tag === "BUTTON" || tag === "A";
+}
+
 export default function Home() {
   const [mode, setMode] = useState<Mode>("focus");
   const modeRef = useRef<Mode>("focus");
@@ -178,6 +223,41 @@ export default function Home() {
   const [philosophyOpen, setPhilosophyOpen] = useState(false);
   const [hasStarted, setHasStarted] = useState(true); // assume yes until localStorage says otherwise
   const [session, setSession] = useState({ name: "", elapsed: 0 });
+
+  /** Which full-screen screen is up, if any. */
+  const [screen, setScreen] = useState<Screen | null>(null);
+  /**
+   * Mirror of `screen` for the key handler. Without it the handler would have
+   * to depend on `screen` and be re-bound on every toggle, and the Escape
+   * branch would have to make its decision inside a setState updater - which
+   * React StrictMode invokes twice in development, so any side effect placed
+   * there fires twice.
+   */
+  const screenRef = useRef<Screen | null>(null);
+
+  /** Whether the stop-settling-in offer is currently on screen. */
+  const [skipOpen, setSkipOpen] = useState(false);
+  /**
+   * What the offer window is measuring from.
+   *
+   * The window effect has to know whether it woke up because the mode
+   * changed or because the session started, and its dependency list cannot
+   * tell it: [mode, playing] fires identically for both. So the previous
+   * values are kept explicitly. Refs rather than state, because they are
+   * written during the same effect that reads them and must not cause a
+   * render of their own.
+   */
+  const skipPrevMode = useRef<Mode>("focus");
+  const skipPrevPlaying = useRef(false);
+
+  /**
+   * Text for the polite live region.
+   *
+   * Both features are otherwise silent to a screen reader for opposite
+   * reasons: skipping the ramp changes nothing visible at all, and a screen
+   * changes everything at once with no explanation of how to undo it.
+   */
+  const [announce, setAnnounce] = useState("");
 
   /**
    * True while any dialog owns the keyboard. All three are mutually
@@ -256,6 +336,10 @@ export default function Home() {
   useEffect(() => {
     splitRef.current = split;
   }, [split]);
+
+  useEffect(() => {
+    screenRef.current = screen;
+  }, [screen]);
 
   // Read on the client only: touching localStorage during render would drive
   // the server and client markup apart and produce a hydration mismatch.
@@ -543,6 +627,143 @@ export default function Home() {
     persist();
   }, [flushSpan, persist]);
 
+  // --- stop settling in ---------------------------------------------------
+
+  /**
+   * Take the offer.
+   *
+   * There are two settlings, and this ends both.
+   *
+   * The session's own: Initiation, 180 seconds of climbing intensity. The
+   * engine does that work and reports how far it actually moved, rounded up
+   * to a whole beat so a pulsed mode lands on the grid rather than a fraction
+   * of a beat short of it. Zero means there was nothing to skip.
+   *
+   * The mode's: the red split clock counting out a settling window after a
+   * mode change. That one is a display rather than a sound, but the feature
+   * is called "stop settling in", and leaving a clock visibly counting
+   * settling time after the user has said they are done settling would be the
+   * app contradicting itself. It is folded away through the ordinary summing
+   * stage, so it merges rather than vanishing.
+   *
+   * Doing neither is silent. This is reachable from a key chord at any time,
+   * including times when there is nothing to do, and a chord that announces
+   * "nothing happened" is worse than one that does nothing.
+   *
+   * The session clock is re-read immediately instead of waiting for the
+   * once-a-second interval, because the sound changes now and a readout that
+   * agrees with it a beat later reads as a bug.
+   */
+  const skipSettling = useCallback(() => {
+    setSkipOpen(false);
+    const engine = engineRef.current;
+    if (!engine || !engine.running) return;
+
+    const jumped =
+      engine.elapsed < SETTLE_SECONDS ? engine.fastForward(SETTLE_SECONDS) : 0;
+    if (jumped > 0) {
+      const at = engine.elapsed;
+      setSession({ name: sectionAt(at).name, elapsed: at });
+    }
+
+    // Read the mirror, not the state: this runs from a key handler that
+    // cannot depend on `split` without being re-bound on every tick of it.
+    const s = splitRef.current;
+    const folding = s !== null && s.stage === "settling";
+    if (folding) {
+      setSplit((cur) => {
+        if (!cur || cur.stage !== "settling") return cur;
+        // Keep the real number rather than jumping the red clock to 3:00.
+        // It did not settle for three minutes; it settled for as long as it
+        // settled, and then was stopped.
+        const m =
+          cur.settleStart !== null
+            ? (performance.now() - cur.settleStart) / 1000
+            : cur.modeElapsed;
+        return { ...cur, stage: "summing", modeElapsed: m };
+      });
+    }
+
+    if (jumped <= 0 && !folding) return;
+    setAnnounce(
+      jumped > 0
+        ? "Settling in skipped. The session continues at full depth."
+        : "Settling window ended."
+    );
+  }, []);
+
+  /**
+   * The offer window.
+   *
+   * Two situations, one number each. A beginning gets SKIP_AT_START; a mode
+   * shift gets the longer SKIP_AT_SHIFT, because a shift already has a
+   * crossfade, a settle tick and a rolling red clock happening in the same
+   * place. Both hold for SKIP_HOLD. See SkipPrompt.tsx for why these are two
+   * constants rather than eight.
+   *
+   * [mode, playing] cannot distinguish the two on its own - it fires the same
+   * way for a mode change, a resume, and a mode change made while paused and
+   * then resumed - so the previous values are compared explicitly.
+   *
+   * THE GUARD. This is checked when the offer would appear rather than when
+   * the timer is set, because a session can cross out of Initiation, or be
+   * paused, during the few seconds in between. It used to be `elapsed >=
+   * SETTLE_SECONDS -> nothing to skip`, and that was the bug: taking the
+   * offer fast-forwards past SETTLE_SECONDS, which makes that test true for
+   * the rest of the session, so the offer never appeared again no matter how
+   * many times the mode changed. A mode shift opens a settling window of its
+   * own, and that window is a real thing to be offered out of, so it counts.
+   */
+  useEffect(() => {
+    const shifted = skipPrevMode.current !== mode;
+    const resumed = !skipPrevPlaying.current && playing;
+    skipPrevMode.current = mode;
+    skipPrevPlaying.current = playing;
+
+    setSkipOpen(false);
+    if (!playing) return;
+
+    const at = shifted && !resumed ? SKIP_AT_SHIFT : SKIP_AT_START;
+    const show = window.setTimeout(() => {
+      const engine = engineRef.current;
+      if (!engine || !engine.running) return;
+      const s = splitRef.current;
+      const settling = s !== null && s.stage === "settling";
+      if (engine.elapsed >= SETTLE_SECONDS && !settling) return;
+      setSkipOpen(true);
+    }, at * 1000);
+    const hide = window.setTimeout(
+      () => setSkipOpen(false),
+      (at + SKIP_HOLD) * 1000
+    );
+    return () => {
+      window.clearTimeout(show);
+      window.clearTimeout(hide);
+    };
+  }, [mode, playing]);
+
+  // --- blackout / whiteout ------------------------------------------------
+
+  const toggleScreen = useCallback((kind: Screen) => {
+    if (screenRef.current === kind) {
+      setScreen(null);
+      setAnnounce("Screen restored.");
+      return;
+    }
+    setScreen(kind);
+    setAnnounce(
+      kind === "black"
+        ? "Blackout. The session is still playing. Press Shift plus B, or Escape, or double click, to come back."
+        : "Whiteout. The session is still playing. Press Shift plus W, or Escape, or double click, to come back."
+    );
+  }, []);
+
+  const exitScreen = useCallback(() => {
+    if (!screenRef.current) return;
+    setScreen(null);
+    setAnnounce("Screen restored.");
+  }, []);
+
   // Refresh the pane's numbers only while it is open. A session runs for
   // hours; there is no reason to re-render a closed dialog once a second.
   useEffect(() => {
@@ -640,6 +861,19 @@ export default function Home() {
     setMeasureOpen(false);
     setPhilosophyOpen(false);
   }, []);
+
+  /**
+   * Entering a screen from the command centre. The panel has to go first:
+   * leaving a dialog open underneath an opaque sheet leaves a focus trap the
+   * user cannot see, and an Escape that closes the wrong thing.
+   */
+  const screenFromPanel = useCallback(
+    (kind: Screen) => {
+      closeAll();
+      toggleScreen(kind);
+    },
+    [closeAll, toggleScreen]
+  );
 
   /**
    * Philosophy is reached from inside the command centre, and REPLACES it
@@ -784,25 +1018,61 @@ export default function Home() {
   // shift state.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Alt + K: take the stop-settling-in offer.
+      //
+      // Deliberately punched through the alt bail immediately below. The
+      // visible offer lives for eight seconds and the decision behind it does
+      // not - "I do not need to ease into this" is just as true ninety
+      // seconds later - so there has to be a way to say it that does not
+      // depend on having caught the word before it withdrew.
+      //
+      // It is also above the dialog and screen guards, unlike every other
+      // key: those guard things you look at, and this is a thing you hear.
+      // The session is running behind the command centre and behind a
+      // blackout, and so is Initiation.
+      //
+      // Alt+K on macOS types a character. preventDefault stops that. There
+      // are no text fields in the app, but the typing check runs first
+      // anyway, for the same reason it does for Space.
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyK") {
+        if (isTypingTarget(e.target)) return;
+        e.preventDefault();
+        if (e.repeat) return;
+        skipSettling();
+        return;
+      }
+
       // Leave browser and OS chords alone.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (isTypingTarget(e.target)) return;
 
+      // Escape, in priority order. A screen outranks a panel: it is the only
+      // state in which the user can see nothing at all, so it must be the
+      // first thing any exit key undoes.
       if (e.code === "Escape") {
-        if (modalOpen) {
+        if (screenRef.current) {
+          e.preventDefault();
+          exitScreen();
+        } else if (modalOpen) {
           e.preventDefault();
           // Escape means "put it all away", including from Philosophy - it
           // is the one exit that does not hand you back to the command
           // centre, because it is the key you press when you want the
           // session back.
           closeAll();
+        } else if (skipOpen) {
+          e.preventDefault();
+          setSkipOpen(false); // declining the offer early
         }
         return;
       }
 
       // The two panel chords are handled before the modal guard below, so
-      // each one closes the others rather than stacking dialogs.
+      // each one closes the others rather than stacking dialogs. They are
+      // inert behind a screen: a dialog under an opaque sheet is a focus trap
+      // with nothing visible in it.
       if (e.shiftKey && e.code === "KeyC") {
+        if (screenRef.current) return;
         e.preventDefault();
         if (commandOpen) closeAll();
         else openCommand(); // they found it; the hint tail has nothing to add
@@ -810,6 +1080,7 @@ export default function Home() {
       }
 
       if (e.shiftKey && e.code === "KeyM") {
+        if (screenRef.current) return;
         e.preventDefault();
         cancelHints(true);
         setCommandOpen(false);
@@ -822,7 +1093,21 @@ export default function Home() {
       // handled above.
       if (modalOpen) return;
 
+      if (e.shiftKey && e.code === "KeyB") {
+        e.preventDefault();
+        toggleScreen("black");
+        return;
+      }
+
+      if (e.shiftKey && e.code === "KeyW") {
+        e.preventDefault();
+        toggleScreen("white");
+        return;
+      }
+
       if (e.code === "Space") {
+        // Do not steal Space from a focused control - see isActivatable().
+        if (isActivatable(document.activeElement)) return;
         e.preventDefault(); // stop the page scrolling
         if (e.repeat) return;
         const engine = engineRef.current;
@@ -840,6 +1125,11 @@ export default function Home() {
         pauseAudio();
         return;
       }
+
+      // Everything below this line moves the mode bar, which is not on screen
+      // behind a blackout. Changing mode by feel, with no way to see what you
+      // landed on, is not a shortcut - it is a guess.
+      if (screenRef.current) return;
 
       if (e.code === "ArrowRight" || e.code === "ArrowDown") {
         e.preventDefault();
@@ -869,12 +1159,16 @@ export default function Home() {
     cancelHints,
     closeAll,
     commandOpen,
+    exitScreen,
     modalOpen,
     noteDeadSpace,
     openCommand,
     pauseAudio,
     scrollTo,
+    skipOpen,
+    skipSettling,
     startAudio,
+    toggleScreen,
   ]);
 
   // session readout, and the slow half of the split timer.
@@ -950,7 +1244,7 @@ export default function Home() {
 
   return (
     <main>
-      <Visualizer mode={mode} />
+      <Visualizer mode={mode} paused={screen !== null} />
       <span className="wordmark">Soundscape</span>
 
       {/* Borderless, top-right. Hover or keyboard focus reveals the chord, so
@@ -978,6 +1272,8 @@ export default function Home() {
         open={commandOpen}
         onClose={() => setCommandOpen(false)}
         onOpenPhilosophy={openPhilosophy}
+        onBlackout={() => screenFromPanel("black")}
+        onWhiteout={() => screenFromPanel("white")}
       />
 
       <Philosophy open={philosophyOpen} onClose={closePhilosophy} />
@@ -991,8 +1287,20 @@ export default function Home() {
       />
 
       <div className="hud">
+        {/* The mode name and the offer are one line, rendered by one
+            component, so the pair re-centres as the red word opens instead
+            of the name sitting still while something grows off its right.
+            Closed behind a screen, which also takes it out of the tab order
+            rather than leaving an invisible button to land on. */}
         <p className="session">
-          <strong>{active.label}</strong>
+          <strong>
+            <SkipPrompt
+              mode={mode}
+              label={active.label}
+              open={skipOpen && screen === null}
+              onSkip={skipSettling}
+            />
+          </strong>
         </p>
 
         <SessionClock
@@ -1044,6 +1352,14 @@ export default function Home() {
           onFinish={finishHints}
         />
       </div>
+
+      <Blackout screen={screen} onExit={exitScreen} />
+
+      {/* Polite, not assertive: these are confirmations of something the user
+          just did, not interruptions. */}
+      <p role="status" aria-live="polite" style={SR_ONLY}>
+        {announce}
+      </p>
     </main>
   );
 }
