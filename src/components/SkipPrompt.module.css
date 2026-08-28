@@ -9,95 +9,131 @@
  */
 
 /*
- * Zero-height slot.
+ * The line.
  *
- * The HUD is a centred flex column with a 0.9rem gap. Adding a real box to it
- * would push the session clock and everything under it down the page the
- * moment the prompt appeared, and back up when it left -- a layout jump in the
- * middle of a session, which is precisely the kind of thing this app spends
- * its whole design budget avoiding. So the slot contributes no height and the
- * button is positioned out of flow, centred on the boundary between the mode
- * name and the clock. It occupies one gap slot, so 1.8rem of clear space is
- * available and the button is smaller than that.
+ * A flex row rather than inline text, for two reasons. It centres the mode
+ * name and the red word as one block, so the pair drifts left as the word
+ * opens instead of the name sitting still and the word growing off to the
+ * right. And a flex item takes its baseline from its content even when it
+ * clips its overflow -- an inline-block with `overflow: hidden` does not, it
+ * takes its baseline from its bottom margin edge, which would drop the red
+ * word below the white one by a descender.
+ *
+ * Everything typographic is inherited: this element sets no font, no size, no
+ * weight, no tracking and no case, so the word is guaranteed to match the
+ * mode name it sits beside even if that changes.
  */
-.slot {
-  position: relative;
+.row {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
   width: 100%;
-  height: 0;
-  /* Above the visualizer and the HUD text, below the command scrim (10). */
-  z-index: 3;
 }
 
-.button {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%) scale(0.86);
-  opacity: 0;
-  /* Not clickable until it has actually arrived; a 0-opacity button that
-     still swallows clicks is a trap sitting invisibly over the clock. */
-  pointer-events: none;
-
-  appearance: none;
-  -webkit-appearance: none;
-  margin: 0;
-  padding: 0.3rem 0.95rem;
-  border: 1px solid var(--red-dim, #5c0a0f);
-  /* Fully rounded: chrome in this app is circles and circle-ended shapes.
-     Squares and squircles are reserved for nothing, because they are banned. */
-  border-radius: 999px;
-  background: rgba(5, 5, 5, 0.86);
-  color: var(--red-text, #cf5058);
-  font: inherit;
-  font-size: 0.72rem;
-  letter-spacing: 0.055em;
-  line-height: 1;
+.name {
   white-space: nowrap;
-  cursor: pointer;
-
-  transition:
-    opacity 420ms ease,
-    transform 420ms cubic-bezier(0.2, 0.8, 0.3, 1),
-    color 180ms ease,
-    border-color 180ms ease,
-    background-color 180ms ease;
-}
-
-.button[data-on="true"] {
-  opacity: 1;
-  transform: translate(-50%, -50%) scale(1);
-  pointer-events: auto;
-}
-
-.button:hover {
-  color: var(--fg, #e8e4e0);
-  border-color: var(--red, #b1121b);
-  background: rgba(177, 18, 27, 0.16);
-}
-
-.button:focus-visible {
-  outline: 2px solid var(--red, #b1121b);
-  outline-offset: 3px;
-}
-
-.button:active {
-  transform: translate(-50%, -50%) scale(0.96);
 }
 
 /*
- * Reduced motion: it still arrives and still leaves -- the prompt would be
+ * The collapsing box.
+ *
+ * Closed, it is exactly zero wide -- the gap before the word lives inside the
+ * button's padding, so a closed offer leaves no hole after the mode name.
+ *
+ * Opening is slower than closing (950ms against 620ms), and gently eased. It
+ * should read as the line making room for a thought, not as an element
+ * arriving. `max-width` is animatable where `width: auto` is not; the content
+ * never reaches the bound.
+ */
+.wrap {
+  display: inline-flex;
+  overflow: hidden;
+  max-width: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    max-width 620ms cubic-bezier(0.4, 0, 0.7, 0.4),
+    opacity 380ms ease,
+    /* held until the collapse has finished, so the word is not deleted
+       mid-withdrawal */
+    visibility 0s linear 620ms;
+}
+
+.wrap[data-on="true"] {
+  max-width: 8em;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    max-width 950ms cubic-bezier(0.2, 0.8, 0.25, 1),
+    opacity 950ms ease,
+    visibility 0s linear 0s;
+}
+
+/*
+ * The word itself. No border, no background, no radius, no padding box: it is
+ * type, and the only thing separating it from the mode name is colour.
+ *
+ * --red-text rather than --red. --red is tuned for a glowing 6px dot and is
+ * close to unreadable as small type on #050505; --red-text is the same hue
+ * lifted until it is legible, and is what the split clock already uses.
+ */
+.word {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  margin: 0;
+  /* The whole gap between the two words. Inside the clipping box, so it
+     collapses with it. */
+  padding: 0 0 0 0.5em;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  line-height: inherit;
+  color: var(--red-text, #cf5058);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: text-shadow 420ms ease, opacity 260ms ease;
+}
+
+/*
+ * Hover and focus glow rather than change colour. Brightening would take it
+ * towards the white of the mode name, which is the one distinction the whole
+ * design rests on; darkening towards --red would make it harder to read.
+ */
+.word:hover,
+.word:focus-visible {
+  text-shadow: 0 0 18px rgba(177, 18, 27, 0.9);
+}
+
+/* Circle-ended, like every other focus ring and every other shape here. */
+.word:focus-visible {
+  outline: 1px solid var(--red, #b1121b);
+  outline-offset: 4px;
+  border-radius: 999px;
+}
+
+.word:active {
+  opacity: 0.72;
+}
+
+/*
+ * Reduced motion. The offer still appears and still withdraws -- it would be
  * useless if it could not be seen to change -- but it does so by opacity
- * alone, with no scale and no easing curve.
+ * alone, with the width snapping. The line still re-centres; it simply does
+ * it in one step.
  */
 @media (prefers-reduced-motion: reduce) {
-  .button,
-  .button[data-on="true"],
-  .button:active {
-    transform: translate(-50%, -50%);
-    transition:
-      opacity 160ms linear,
-      color 180ms ease,
-      border-color 180ms ease,
-      background-color 180ms ease;
+  .wrap {
+    max-width: 0;
+    transition: opacity 200ms ease, visibility 0s linear 200ms;
+  }
+  .wrap[data-on="true"] {
+    max-width: 8em;
+    transition: opacity 200ms ease, visibility 0s linear 0s;
+  }
+  .word {
+    transition: none;
   }
 }

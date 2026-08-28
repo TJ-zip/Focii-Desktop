@@ -49,11 +49,10 @@ export const COMMANDS: Command[] = [
       "Press twice. The first arrow arms and does not move; the second moves, and further single presses keep moving while the dot glows. Scrolling or clicking the bar needs no such confirmation \u2014 you already reached for it.",
   },
   {
-    keys: ["Tab", "\u21B5"],
-    sep: "then",
+    keys: ["Alt", "K"],
     label: "Stop settling in",
     detail:
-      "A session opens with three minutes of easing in. If you are already where the mode is trying to take you, a short question appears under the mode name offering to skip the rest of it \u2014 Attack, Better, Easier, Harder, depending on the mode. It withdraws on its own if you ignore it, and returns whenever you change mode.",
+      "A session opens with three minutes of easing in. If you are already where the mode is trying to take you, a red word appears beside the mode name offering to skip the rest of it \u2014 Attack, Better, Easier, Harder, depending on the mode. It arrives four and a half seconds in, seven seconds after a mode change, and withdraws on its own after eight. Click it, or press Alt + K at any point while there is still something to skip \u2014 the word is a prompt, not the only way in.",
   },
   {
     keys: ["Shift", "M"],
