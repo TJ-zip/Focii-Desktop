@@ -28,6 +28,11 @@ jobs:
         with:
           node-version: 22
 
+      # Before Install: needs nothing but the node stdlib, so a drifted or
+      # corrupted logo fails in seconds instead of after a full build.
+      - name: Brand assets
+        run: node scripts/check-brand-assets.mjs
+
       - name: Install
         run: |
           if [ -f package-lock.json ]; then
