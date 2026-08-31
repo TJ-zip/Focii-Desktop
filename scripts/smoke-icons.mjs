@@ -9,8 +9,9 @@
  *
  * That last point is the whole game. A favicon appears because the document
  * carries <link rel="icon">. Nothing in this repo writes that tag; Next
- * injects it after noticing src/app/icon.svg. If that inference ever breaks,
- * every build stays green and every page quietly loses its icon.
+ * injects it after noticing src/app/icon.svg and src/app/icon1.tsx. If that
+ * inference ever breaks, every build stays green and every page quietly
+ * loses its icon.
  *
  * The generated images are doing separate work: they are produced by Satori
  * at request time, so a build that compiles tells you nothing about whether
@@ -91,6 +92,10 @@ async function getByUrl(raw) {
   return get(`${u.pathname}${u.search}`);
 }
 
+function isPng(buf) {
+  return buf.length > 8 && PNG_MAGIC.every((b, i) => buf[i] === b);
+}
+
 async function expectPng(label, res) {
   const type = res.headers.get("content-type") ?? "";
   if (!res.ok) {
@@ -98,8 +103,7 @@ async function expectPng(label, res) {
     return;
   }
   const buf = new Uint8Array(await res.arrayBuffer());
-  const isPng = buf.length > 8 && PNG_MAGIC.every((b, i) => buf[i] === b);
-  if (!isPng) {
+  if (!isPng(buf)) {
     fail(
       label,
       `not a PNG (content-type ${type}, ${buf.length} bytes). Satori ` +
@@ -125,46 +129,86 @@ try {
   fail("GET /", err.message);
 }
 
-/* --- the favicon, tag and target ---------------------------------------- */
+/* --- the favicons, tags and targets --------------------------------------
+ *
+ * Plural deliberately. Asserting that SOME icon exists is what let a
+ * Safari-invisible page ship: one SVG link satisfied the check while no
+ * browser without SVG favicon support had anything to render.
+ */
 
 if (html) {
   const tags = linkTags(html);
-  const iconTag = findByRel(tags, "icon");
+  const iconTags = tags.filter((t) => relTokens(t).includes("icon"));
 
-  if (!iconTag) {
-    /* Say what IS there. "Missing" alone does not distinguish between Next
-     * emitting nothing and Next emitting something unexpected. */
+  if (iconTags.length === 0) {
     const rels = tags.map((t) => relTokens(t).join(" ")).filter(Boolean);
     fail(
       'HTML carries <link rel="icon">',
       'no link tag whose rel contains the token "icon" -- Next did not ' +
-        "pick up src/app/icon.svg, so no browser will show a favicon. " +
+        "pick up the icon files, so no browser will show a favicon. " +
         `rel values present: ${rels.length ? rels.join(", ") : "none"}`,
     );
   } else {
-    pass('HTML carries <link rel="icon">', iconTag.slice(0, 140));
+    pass(`HTML carries ${iconTags.length} favicon link(s)`);
 
-    /* Follow the href the browser would actually use. A tag pointing at a
-     * 404 is exactly as useless as no tag at all. */
-    const href = attr(iconTag, "href");
-    if (!href) {
-      fail("favicon link has an href", iconTag.slice(0, 140));
+    const types = iconTags.map((t) => (attr(t, "type") ?? "").toLowerCase());
+
+    if (types.some((t) => t.includes("svg"))) {
+      pass("a favicon is offered as SVG");
     } else {
+      fail(
+        "a favicon is offered as SVG",
+        `no icon link with an SVG type. types: ${types.join(", ") || "none"}`,
+      );
+    }
+
+    /* The fallback. Without it, Safari shows no tab icon at all. */
+    if (types.some((t) => t.includes("png"))) {
+      pass("a favicon is offered as PNG");
+    } else {
+      fail(
+        "a favicon is offered as PNG",
+        "no raster icon link -- browsers that cannot read SVG favicons, " +
+          `Safari among them, will show none. types: ${types.join(", ") || "none"}`,
+      );
+    }
+
+    /* Every advertised icon must actually be fetchable, and must match the
+     * content type its own tag claims. */
+    for (const tag of iconTags) {
+      const href = attr(tag, "href");
+      const declared = (attr(tag, "type") ?? "").toLowerCase();
+      const label = `GET favicon ${declared || "(untyped)"} ${href ?? ""}`;
+
+      if (!href) {
+        fail("favicon link has an href", tag.slice(0, 140));
+        continue;
+      }
+
       try {
         const res = await getByUrl(href);
-        const type = res.headers.get("content-type") ?? "";
         if (!res.ok) {
-          fail(`GET favicon href (${href})`, `status ${res.status}`);
-        } else {
-          const body = await res.text();
-          if (!body.includes("<path")) {
-            fail(`GET favicon href (${href})`, "no path data in response");
+          fail(label, `status ${res.status}`);
+          continue;
+        }
+        const buf = new Uint8Array(await res.arrayBuffer());
+
+        if (declared.includes("png")) {
+          if (!isPng(buf)) {
+            fail(label, `declared PNG but bytes are not a PNG (${buf.length} B)`);
           } else {
-            pass(`GET favicon href (${href})`, `${type}, ${body.length} bytes`);
+            pass(label, `PNG, ${buf.length} bytes`);
+          }
+        } else {
+          const body = new TextDecoder().decode(buf);
+          if (!body.includes("<path")) {
+            fail(label, "no path data in response");
+          } else {
+            pass(label, `${buf.length} bytes`);
           }
         }
       } catch (err) {
-        fail(`GET favicon href (${href})`, err.message);
+        fail(label, err.message);
       }
     }
   }
