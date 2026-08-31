@@ -23,6 +23,11 @@ export const contentType = "image/png";
 export const alt =
   "Focii \u2014 generative soundscapes for Focus, Relax, Sleep and Pump.";
 
+/* A braced string literal, not a JSX text node: escapes are only interpreted
+ * inside string literals, and as bare JSX text this would print the
+ * backslashes verbatim. */
+const TAGLINE = "Focus \u00b7 Relax \u00b7 Sleep \u00b7 Pump";
+
 export default function OpengraphImage() {
   /* The path data is ASCII, so Buffer round-trips it safely. */
   const dataUri = `data:image/svg+xml;base64,${Buffer.from(iconSvg()).toString(
@@ -64,7 +69,7 @@ export default function OpengraphImage() {
               color: "#9a9490",
             }}
           >
-            Focus \u00b7 Relax \u00b7 Sleep \u00b7 Pump
+            {TAGLINE}
           </div>
         </div>
       </div>
