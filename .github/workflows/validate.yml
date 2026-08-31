@@ -75,3 +75,31 @@ jobs:
       # actually happened, rather than assuming it did.
       - name: Icon routes
         run: node scripts/check-icon-routes.mjs
+
+      # And this asks a running server, which is the only thing that proves a
+      # browser would receive the icons. Build output existing is not the same
+      # as the HTML carrying <link rel="icon">.
+      - name: Icon smoke test
+        run: |
+          npm run start &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null http://localhost:3000/; then
+              echo "server up after ${i}s"
+              break
+            fi
+            if ! kill -0 $SERVER_PID 2>/dev/null; then
+              echo "server exited before becoming ready"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          curl -sf -o /dev/null http://localhost:3000/ || {
+            echo "server never became ready"
+            exit 1
+          }
+
+          BASE_URL=http://localhost:3000 node scripts/smoke-icons.mjs
