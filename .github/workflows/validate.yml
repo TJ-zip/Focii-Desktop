@@ -69,3 +69,9 @@ jobs:
         run: |
           node -e "const s=require('./package.json').scripts||{};if(!s.build){console.error('missing build script');process.exit(1)}"
           npm run build
+
+      # The favicon and touch icon are wired up by file convention alone -- no
+      # import, nothing in layout.tsx. This asks the build output whether that
+      # actually happened, rather than assuming it did.
+      - name: Icon routes
+        run: node scripts/check-icon-routes.mjs
