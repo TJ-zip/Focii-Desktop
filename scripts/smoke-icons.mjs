@@ -10,13 +10,16 @@
  * That last point is the whole game. A favicon appears because the document
  * carries <link rel="icon">. Nothing in this repo writes that tag; Next
  * injects it after noticing src/app/icon.svg. If that inference ever breaks,
- * every build stays green and every page quietly loses its icon. This is the
- * only check here that would catch it.
+ * every build stays green and every page quietly loses its icon.
  *
  * The generated images are doing separate work: they are produced by Satori
  * at request time, so a build that compiles tells you nothing about whether
  * rendering throws. Checking for the PNG magic bytes is the difference
  * between "the module compiled" and "a PNG came back".
+ *
+ * What this CANNOT tell you: whether the images look right. A card with
+ * mangled text renders as a perfectly valid PNG and passes every assertion
+ * here. Composition needs eyes.
  *
  * Usage: BASE_URL=http://localhost:3000 node scripts/smoke-icons.mjs
  */
@@ -40,25 +43,55 @@ async function get(path) {
   return fetch(`${BASE}${path}`, { redirect: "follow" });
 }
 
+/* --- tiny tag helpers ----------------------------------------------------
+ *
+ * These parse rather than pattern-match, because the obvious regex for a
+ * favicon link is subtly wrong: rel="[^"]*\bicon\b[^"]*" also matches
+ * rel="apple-touch-icon", since - is a non-word character and so \b sits
+ * between "touch-" and "icon". That made the favicon assertion satisfiable
+ * by the touch icon alone.
+ *
+ * Splitting rel into tokens removes the ambiguity: "apple-touch-icon" is one
+ * token and is not "icon". rel="shortcut icon" is two tokens, one of which
+ * is "icon", and still matches -- which is correct.
+ */
+
+function linkTags(html) {
+  return [...html.matchAll(/<link\b[^>]*>/gi)].map((m) => m[0]);
+}
+
+function relTokens(tag) {
+  const m = tag.match(/\brel="([^"]*)"/i);
+  return m ? m[1].trim().toLowerCase().split(/\s+/) : [];
+}
+
+function attr(tag, name) {
+  const m = tag.match(new RegExp(`\\b${name}="([^"]*)"`, "i"));
+  return m ? m[1].replace(/&amp;/g, "&") : null;
+}
+
+function findByRel(tags, token) {
+  return tags.find((t) => relTokens(t).includes(token)) ?? null;
+}
+
 /** Reads a meta tag's content, tolerating either attribute order. */
-function metaContent(html, attr, value) {
+function metaContent(html, attrName, value) {
   const pattern = new RegExp(
-    `<meta[^>]*${attr}="${value}"[^>]*content="([^"]*)"|` +
-      `<meta[^>]*content="([^"]*)"[^>]*${attr}="${value}"`,
+    `<meta[^>]*${attrName}="${value}"[^>]*content="([^"]*)"|` +
+      `<meta[^>]*content="([^"]*)"[^>]*${attrName}="${value}"`,
   );
   const m = html.match(pattern);
   if (!m) return null;
-  /* HTML-escaped ampersands are common in generated image URLs. */
   return (m[1] ?? m[2]).replace(/&amp;/g, "&");
 }
 
-/** Fetches an absolute metadata URL against BASE, so the origin never matters. */
-async function getByMetaUrl(raw) {
+/** Fetches an absolute or relative URL against BASE, so origin never matters. */
+async function getByUrl(raw) {
   const u = new URL(raw, BASE);
   return get(`${u.pathname}${u.search}`);
 }
 
-async function expectPng(label, res, extra = "") {
+async function expectPng(label, res) {
   const type = res.headers.get("content-type") ?? "";
   if (!res.ok) {
     fail(label, `status ${res.status}`);
@@ -74,7 +107,7 @@ async function expectPng(label, res, extra = "") {
     );
     return;
   }
-  pass(label, `PNG, ${buf.length} bytes${extra ? `, ${extra}` : ""}`);
+  pass(label, `PNG, ${buf.length} bytes`);
 }
 
 /* --- the document ------------------------------------------------------- */
@@ -92,32 +125,72 @@ try {
   fail("GET /", err.message);
 }
 
+/* --- the favicon, tag and target ---------------------------------------- */
+
 if (html) {
-  /* Next may emit rel="icon" and orders attributes as it likes, so match the
-   * rel value rather than a whole tag. */
-  if (/rel="[^"]*\bicon\b[^"]*"/.test(html)) {
-    const m = html.match(/<link[^>]*rel="[^"]*\bicon\b[^"]*"[^>]*>/);
-    pass("HTML references a favicon", m ? m[0].slice(0, 120) : "");
-  } else {
+  const tags = linkTags(html);
+  const iconTag = findByRel(tags, "icon");
+
+  if (!iconTag) {
+    /* Say what IS there. "Missing" alone does not distinguish between Next
+     * emitting nothing and Next emitting something unexpected. */
+    const rels = tags.map((t) => relTokens(t).join(" ")).filter(Boolean);
     fail(
-      "HTML references a favicon",
-      'no <link rel="icon"> in the document -- Next did not pick up ' +
-        "src/app/icon.svg, so no browser will show it",
+      'HTML carries <link rel="icon">',
+      'no link tag whose rel contains the token "icon" -- Next did not ' +
+        "pick up src/app/icon.svg, so no browser will show a favicon. " +
+        `rel values present: ${rels.length ? rels.join(", ") : "none"}`,
     );
+  } else {
+    pass('HTML carries <link rel="icon">', iconTag.slice(0, 140));
+
+    /* Follow the href the browser would actually use. A tag pointing at a
+     * 404 is exactly as useless as no tag at all. */
+    const href = attr(iconTag, "href");
+    if (!href) {
+      fail("favicon link has an href", iconTag.slice(0, 140));
+    } else {
+      try {
+        const res = await getByUrl(href);
+        const type = res.headers.get("content-type") ?? "";
+        if (!res.ok) {
+          fail(`GET favicon href (${href})`, `status ${res.status}`);
+        } else {
+          const body = await res.text();
+          if (!body.includes("<path")) {
+            fail(`GET favicon href (${href})`, "no path data in response");
+          } else {
+            pass(`GET favicon href (${href})`, `${type}, ${body.length} bytes`);
+          }
+        }
+      } catch (err) {
+        fail(`GET favicon href (${href})`, err.message);
+      }
+    }
   }
 
-  if (/rel="apple-touch-icon"/.test(html)) {
-    pass("HTML references the touch icon");
-  } else {
+  const touchTag = findByRel(tags, "apple-touch-icon");
+  if (!touchTag) {
     fail(
-      "HTML references the touch icon",
-      'no <link rel="apple-touch-icon"> -- src/app/apple-icon.tsx was not ' +
-        "picked up",
+      'HTML carries <link rel="apple-touch-icon">',
+      "src/app/apple-icon.tsx was not picked up",
     );
+  } else {
+    pass('HTML carries <link rel="apple-touch-icon">');
+    const href = attr(touchTag, "href");
+    if (!href) {
+      fail("touch icon link has an href", touchTag.slice(0, 140));
+    } else {
+      try {
+        await expectPng(`GET touch icon href (${href})`, await getByUrl(href));
+      } catch (err) {
+        fail(`GET touch icon href (${href})`, err.message);
+      }
+    }
   }
 }
 
-/* --- the favicon -------------------------------------------------------- */
+/* --- the static routes, independent of any tag -------------------------- */
 
 try {
   const res = await get("/icon.svg");
@@ -138,8 +211,6 @@ try {
   fail("GET /icon.svg", err.message);
 }
 
-/* --- the touch icon ----------------------------------------------------- */
-
 try {
   await expectPng("GET /apple-icon", await get("/apple-icon"));
 } catch (err) {
@@ -148,9 +219,6 @@ try {
 
 /* --- the link preview --------------------------------------------------- */
 
-/* Read the URL out of the tag rather than assuming the generated path: this
- * checks the tag a scraper reads AND the image it would fetch, together. A
- * card nobody can fetch is indistinguishable from no card at all. */
 if (html) {
   const ogImage = metaContent(html, "property", "og:image");
   if (!ogImage) {
@@ -161,7 +229,7 @@ if (html) {
   } else {
     pass("HTML declares og:image", ogImage.slice(0, 100));
     try {
-      await expectPng("GET og:image", await getByMetaUrl(ogImage));
+      await expectPng("GET og:image", await getByUrl(ogImage));
     } catch (err) {
       fail("GET og:image", err.message);
     }
@@ -173,7 +241,7 @@ if (html) {
   } else {
     pass("HTML declares twitter:image", twImage.slice(0, 100));
     try {
-      await expectPng("GET twitter:image", await getByMetaUrl(twImage));
+      await expectPng("GET twitter:image", await getByUrl(twImage));
     } catch (err) {
       fail("GET twitter:image", err.message);
     }
